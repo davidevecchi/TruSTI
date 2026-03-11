@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Relay is a self-hosted ws:// server; allow cleartext for all connections.
+         TruSTI's E2E encryption (ECDH+AES-GCM) protects message payloads regardless. -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

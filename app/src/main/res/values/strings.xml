@@ -1,0 +1,63 @@
+<resources>
+    <string name="app_name">TruSTI</string>
+
+    <!-- HomeFragment -->
+    <string name="home_subtitle">Feel safe</string>
+    <string name="qr_content_desc">Your public key QR code</string>
+    <string name="qr_hint">Have your peer scan this code</string>
+    <string name="btn_scan_peer">Scan Peer</string>
+
+    <!-- ScannerActivity -->
+    <string name="scan_hint">Point at a TruSTI QR code</string>
+    <string name="btn_cancel">Cancel</string>
+
+    <!-- Bottom navigation -->
+    <string name="nav_connect">Connect</string>
+    <string name="nav_bonds">Bonds</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Contacts screen -->
+    <string name="contacts_empty_title">No contacts yet</string>
+    <string name="contacts_empty_sub">Scan a peer\'s QR code to add them</string>
+
+    <!-- Settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_version">Version 1.0</string>
+    <string name="settings_appearance_title">Appearance</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_relay_title">Relay Server</string>
+    <string name="settings_relay_hint">ws://your-relay:8080</string>
+    <string name="settings_relay_save">Save</string>
+
+    <!-- Conversation screen -->
+    <string name="hint_message">Message…</string>
+    <string name="btn_send">Send</string>
+
+    <!-- Tests screen (list / cards) -->
+    <string name="nav_tests">Tests</string>
+    <string name="tests_title">Sexual Health Records</string>
+    <string name="tests_empty_title">No records yet</string>
+    <string name="tests_empty_sub">Add your test results to keep them private and secure</string>
+    <string name="tests_add">Add Record</string>
+
+    <!-- Add-record full-page form -->
+    <string name="tests_add_title">New Test Result</string>
+    <string name="tests_dialog_title">New Test Result</string>
+    <string name="tests_disease_hint">Disease / test name</string>
+    <string name="tests_positive">Positive</string>
+    <string name="tests_negative">Negative</string>
+    <string name="tests_attach_file">Attach photo or PDF</string>
+    <string name="tests_file_attached">File attached</string>
+    <string name="tests_has_attachment">📎 Attachment</string>
+    <string name="tests_save">Save</string>
+    <string name="tests_disease_required">Please select at least one disease</string>
+    <string name="tests_other_hint">Enter disease name</string>
+    <string name="tests_select_diseases">Select diseases tested</string>
+    <string name="tests_result_label">Result</string>
+    <string name="tests_date_label">Test date</string>
+    <string name="tests_delete_title">Delete record</string>
+    <string name="tests_delete_message">Remove \"%s\"?</string>
+    <string name="tests_delete_confirm">Delete</string>
+</resources>

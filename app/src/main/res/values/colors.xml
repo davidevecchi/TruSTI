@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Brand palette — seeded from the bottom logo:
+        coral  #FF5555  (primary highlight)
+        crimson #AA0044  (primary shadow)
+    -->
+
+    <!-- Light theme roles -->
+    <color name="md_primary">#C7273A</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#FFDAD9</color>
+    <color name="md_on_primary_container">#40000C</color>
+
+    <color name="md_secondary">#775658</color>
+    <color name="md_on_secondary">#FFFFFF</color>
+    <color name="md_secondary_container">#FFDADE</color>
+    <color name="md_on_secondary_container">#2C1517</color>
+
+    <color name="md_background">#FFFBFF</color>
+    <color name="md_on_background">#201A1A</color>
+    <color name="md_surface">#FFFBFF</color>
+    <color name="md_on_surface">#201A1A</color>
+    <color name="md_surface_variant">#F5DDDE</color>
+    <color name="md_on_surface_variant">#534344</color>
+    <color name="md_outline">#857374</color>
+    <color name="md_outline_variant">#D8C2C2</color>
+
+    <color name="md_inverse_surface">#362F2F</color>
+    <color name="md_inverse_on_surface">#FBEDED</color>
+    <color name="md_inverse_primary">#FFB3B1</color>
+
+    <color name="md_error">#BA1A1A</color>
+    <color name="md_on_error">#FFFFFF</color>
+    <color name="md_error_container">#FFDAD6</color>
+    <color name="md_on_error_container">#410002</color>
+
+    <!-- Dark theme roles -->
+    <color name="md_primary_dark">#FFB3B1</color>
+    <color name="md_on_primary_dark">#68000F</color>
+    <color name="md_primary_container_dark">#930019</color>
+    <color name="md_on_primary_container_dark">#FFDAD9</color>
+
+    <color name="md_secondary_dark">#E7BDBF</color>
+    <color name="md_on_secondary_dark">#44202A</color>
+    <color name="md_secondary_container_dark">#5D3540</color>
+    <color name="md_on_secondary_container_dark">#FFDADE</color>
+
+    <color name="md_background_dark">#201A1A</color>
+    <color name="md_on_background_dark">#ECE0E0</color>
+    <color name="md_surface_dark">#201A1A</color>
+    <color name="md_on_surface_dark">#ECE0E0</color>
+    <color name="md_surface_variant_dark">#534344</color>
+    <color name="md_on_surface_variant_dark">#D8C2C2</color>
+    <color name="md_outline_dark">#A08C8D</color>
+    <color name="md_outline_variant_dark">#534344</color>
+
+    <color name="md_inverse_surface_dark">#ECE0E0</color>
+    <color name="md_inverse_on_surface_dark">#362F2F</color>
+    <color name="md_inverse_primary_dark">#C7273A</color>
+
+    <color name="md_error_dark">#FFB4AB</color>
+    <color name="md_on_error_dark">#690005</color>
+    <color name="md_error_container_dark">#93000A</color>
+    <color name="md_on_error_container_dark">#FFDAD6</color>
+</resources>

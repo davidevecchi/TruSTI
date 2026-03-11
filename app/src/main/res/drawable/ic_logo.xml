@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Logo derived from the bottom design in logo.svg (g8 group).
+  Viewport crops the SVG coordinate space to the logo content area.
+  Group translate shifts origin so content fills the viewport.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="100dp"
+    android:viewportWidth="110"
+    android:viewportHeight="110">
+
+    <group
+        android:translateX="-50"
+        android:translateY="-148">
+
+        <!-- Coral paths (#FF5555) -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FF5555"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M 56.83786,225.83788 c 10.750641,-3.17382 24.708066,-7.34512 31.364006,-15.04902 7.87706,-9.11727 3.36142,-23.55536 14.318514,-34.51245 9.1309,-9.1309 23.1607,-4.18724 27.98704,0.63909" />
+
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FF5555"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M 81.58504,250.58506 c 3.17382,-10.75064 7.34512,-24.70807 15.04902,-31.36401 9.11727,-7.87706 23.55536,-3.36142 34.51245,-14.31851 9.1309,-9.1309 4.18724,-23.1607 -0.63909,-27.98704" />
+
+        <!-- Crimson paths (#AA0044) -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#AA0044"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M 152.72234,179.44774 c -10.75064,3.17382 -24.70807,7.34512 -31.36401,15.04902 -7.87706,9.11727 -3.36142,23.55536 -14.31851,34.51245 -9.1309,9.1309 -23.1607,4.18724 -27.98704,-0.63909" />
+
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#AA0044"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:pathData="M 127.9752,154.70055 c -3.17382,10.75064 -7.34512,24.70807 -15.04902,31.36401 -9.11727,7.87706 -23.555356,3.36142 -34.512446,14.31851 -9.1309,9.1309 -4.18724,23.1607 0.63909,27.98704" />
+
+        <!-- Coral paths (#FF5555) -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FF5555"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:pathData="M 88.201866,210.78886 c 7.87706,-9.11727 3.36142,-23.55536 14.318514,-34.51245" />
+
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FF5555"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:pathData="M 96.63406,219.22105 c 9.11727,-7.87706 23.55536,-3.36142 34.51245,-14.31851" />
+
+    </group>
+
+</vector>
