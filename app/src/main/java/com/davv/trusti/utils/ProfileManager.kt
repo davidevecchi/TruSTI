@@ -43,7 +43,7 @@ object ProfileManager {
         val random = Random()
         val adj = adjectives[random.nextInt(adjectives.size)]
         val noun = nouns[random.nextInt(nouns.size)]
-        val disambiguation = "$adj-$noun"
+        val disambiguation = "$adj $noun"
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_DISAMBIGUATION, disambiguation).apply()
         return disambiguation

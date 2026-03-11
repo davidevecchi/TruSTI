@@ -15,11 +15,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:layout_marginBottom="20dp"
+            android:layout_marginBottom="24dp"
             android:text="@string/tests_title"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:textColor="?attr/colorOnSurface" />
+            android:textAppearance="@style/TextAppearance.TruSTI.HeadlineMedium" />
 
         <!-- Empty state -->
         <LinearLayout
@@ -29,24 +27,31 @@
             android:layout_weight="1"
             android:orientation="vertical"
             android:gravity="center"
+            android:padding="24dp"
             android:visibility="gone">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:text="🧪"
+                android:textSize="56sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
                 android:text="@string/tests_empty_title"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:textColor="?attr/colorOnSurface" />
+                android:textAppearance="@style/TextAppearance.TruSTI.TitleMedium" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:text="@string/tests_empty_sub"
-                android:textSize="14sp"
-                android:alpha="0.6"
-                android:gravity="center" />
+                android:textAppearance="@style/TextAppearance.TruSTI.BodyMedium"
+                android:textColor="?attr/colorOnSurface"
+                android:gravity="center"
+                android:alpha="0.6" />
         </LinearLayout>
 
         <!-- Records list -->
@@ -73,7 +78,7 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:text="@string/tests_add"
-        android:fontFamily="@font/tsukimi_rounded_regular"
-        app:icon="@android:drawable/ic_input_add" />
+        app:icon="@android:drawable/ic_input_add"
+        style="@style/Widget.TruSTI.ExtendedFloatingActionButton" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

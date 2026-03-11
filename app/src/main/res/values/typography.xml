@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Design 3 Typography System -->
+    
+    <!-- Text styles for different typography scales -->
+    <style name="TextAppearance.TruSTI.DisplayLarge" parent="TextAppearance.Material3.DisplayLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.DisplayMedium" parent="TextAppearance.Material3.DisplayMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.DisplaySmall" parent="TextAppearance.Material3.DisplaySmall">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.HeadlineLarge" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.HeadlineMedium" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.HeadlineSmall" parent="TextAppearance.Material3.HeadlineSmall">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.TitleLarge" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.TitleMedium" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.TitleSmall" parent="TextAppearance.Material3.TitleSmall">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.BodyLarge" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.BodyMedium" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.BodySmall" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.LabelLarge" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.LabelMedium" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <style name="TextAppearance.TruSTI.LabelSmall" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textStyle">normal</item>
+    </style>
+    
+    <!-- Button text styles -->
+    <style name="TextAppearance.TruSTI.Button" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">?attr/colorOnPrimary</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded_medium</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+    
+    <!-- FAB text styles -->
+    <style name="TextAppearance.TruSTI.ExtendedFloatingActionButton" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">?attr/colorOnPrimary</item>
+        <item name="android:fontFamily">@font/tsukimi_rounded</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+</resources>

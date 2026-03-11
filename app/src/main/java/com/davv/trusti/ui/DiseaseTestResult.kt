@@ -23,50 +23,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
-import com.davv.trusti.R
+import com.davv.trusti.model.TestResult
 
-private val ColorGray   = Color(0xFF9E9E9E)
-private val ColorGreen  = Color(0xFF4CAF50)
-private val ColorRed    = Color(0xFFE53935)
-private val ColorBlue   = Color(0xFF1E88E5)
-private val ColorYellow = Color(0xFFFFC107)
+@Composable
+private fun TestResult.label() = this.getStatusLabel()
 
-enum class DiseaseTestState {
-    EMPTY, NEGATIVE, POSITIVE, TAKE_CARE, VACCINATED
-}
+private fun TestResult.iconRes() = this.getStatusIcon()
 
-private fun DiseaseTestState.label() = when (this) {
-    DiseaseTestState.EMPTY      -> "Not tested"
-    DiseaseTestState.NEGATIVE   -> "Negative"
-    DiseaseTestState.POSITIVE   -> "Positive"
-    DiseaseTestState.VACCINATED -> "Vaccinated"
-    DiseaseTestState.TAKE_CARE  -> "Take care"
-}
-
-private fun DiseaseTestState.iconRes() = when (this) {
-    DiseaseTestState.EMPTY      -> R.drawable.indeterminate_question_box_24px
-    DiseaseTestState.NEGATIVE   -> R.drawable.assignment_turned_in_24px
-    DiseaseTestState.POSITIVE   -> R.drawable.health_cross_24px
-    DiseaseTestState.VACCINATED -> R.drawable.syringe_24px
-    DiseaseTestState.TAKE_CARE  -> R.drawable.gpp_maybe_24px
-}
-
-private fun DiseaseTestState.iconColor() = when (this) {
-    DiseaseTestState.POSITIVE   -> ColorRed
-    DiseaseTestState.NEGATIVE   -> ColorGreen
-    DiseaseTestState.VACCINATED -> ColorBlue
-    DiseaseTestState.TAKE_CARE  -> ColorYellow
-    DiseaseTestState.EMPTY      -> ColorGray
-}
+private fun TestResult.iconColor() = this.getStatusColor()
 
 @Composable
 fun DiseaseTestResult(
     disease: String,
-    state: DiseaseTestState = DiseaseTestState.EMPTY,
-    onStateChange: (DiseaseTestState) -> Unit = {},
+    state: TestResult = TestResult.NOT_TESTED,
+    onStateChange: (TestResult) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -117,22 +89,18 @@ fun DiseaseTestResult(
                 onDismissRequest = { expanded = false },
                 containerColor = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                DiseaseTestState.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.label()) },
-                        leadingIcon = {
-                            Icon(
-                                painter = painterResource(option.iconRes()),
-                                contentDescription = null,
-                                tint = option.iconColor(),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        onClick = {
-                            onStateChange(option)
-                            expanded = false
-                        }
-                    )
+                TestResult.entries.forEach { option ->
+                    DropdownMenuItem(text = { Text(option.label()) }, leadingIcon = {
+                        Icon(
+                            painter = painterResource(option.iconRes()),
+                            contentDescription = null,
+                            tint = option.iconColor(),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }, onClick = {
+                        onStateChange(option)
+                        expanded = false
+                    })
                 }
             }
         }

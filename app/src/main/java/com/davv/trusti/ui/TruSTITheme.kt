@@ -76,6 +76,7 @@ fun TruSTITheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
+        typography = TruSTITypography,
         content = content
     )
 }

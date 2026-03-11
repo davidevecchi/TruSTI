@@ -1,11 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
-<font-family xmlns:app="http://schemas.android.com/apk/res-auto">
+<font-family xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
     <font
+        android:fontStyle="normal"
+        android:fontWeight="300"
         app:fontStyle="normal"
-        app:fontWeight="500"
+        app:fontWeight="300"
+        android:font="@font/tsukimi_rounded_light"
+        app:font="@font/tsukimi_rounded_light" />
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="400"
+        app:fontStyle="normal"
+        app:fontWeight="400"
+        android:font="@font/tsukimi_rounded_regular"
         app:font="@font/tsukimi_rounded_regular" />
     <font
+        android:fontStyle="normal"
+        android:fontWeight="500"
+        app:fontStyle="normal"
+        app:fontWeight="500"
+        android:font="@font/tsukimi_rounded_medium"
+        app:font="@font/tsukimi_rounded_medium" />
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="600"
+        app:fontStyle="normal"
+        app:fontWeight="600"
+        android:font="@font/tsukimi_rounded_semibold"
+        app:font="@font/tsukimi_rounded_semibold" />
+    <font
+        android:fontStyle="normal"
+        android:fontWeight="700"
         app:fontStyle="normal"
         app:fontWeight="700"
+        android:font="@font/tsukimi_rounded_bold"
         app:font="@font/tsukimi_rounded_bold" />
 </font-family>

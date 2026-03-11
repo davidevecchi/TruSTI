@@ -6,42 +6,35 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.ui.draw.rotate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import com.davv.trusti.ui.TruSTITheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -56,8 +50,17 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
+import com.davv.trusti.model.DiseaseTest
 import com.davv.trusti.model.TestResult
 import com.davv.trusti.model.TestsRecord
+import com.davv.trusti.ui.TruSTITheme
+import com.davv.trusti.ui.getStatusColor
+import com.davv.trusti.ui.getStatusIcon
+import com.davv.trusti.ui.getStatusLabel
+import com.davv.trusti.ui.StandardPageLayout
+import com.davv.trusti.ui.StandardEmptyState
+import com.davv.trusti.ui.StandardAddFab
+import com.davv.trusti.ui.StandardSectionDivider
 import com.davv.trusti.utils.TestsStore
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -113,6 +116,7 @@ private fun TestsScreen(
 ) {
     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
     var recordToDelete by remember { mutableStateOf<TestsRecord?>(null) }
+    val sortedRecords = remember(records) { records.sortedByDescending { it.date } }
 
     if (recordToDelete != null) {
         val record = recordToDelete!!
@@ -135,81 +139,42 @@ private fun TestsScreen(
         )
     }
 
-    Scaffold(
+    StandardPageLayout(
+        title = stringResource(R.string.tests_title),
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                text = { Text(stringResource(R.string.tests_add)) },
-                icon = {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_plus),
-                        contentDescription = null
-                    )
-                },
+            StandardAddFab(
+                text = stringResource(R.string.tests_add),
                 onClick = onAddRecord
             )
         }
-    ) { padding ->
+    ) {
+        // Always show the summary card, even when no records exist
+        item(key = "summary") {
+            SummaryCard(sortedRecords)
+            Spacer(Modifier.height(6.dp)) // Increased space after summary card
+            StandardSectionDivider()
+            Spacer(Modifier.height(6.dp)) // Increased space after summary card
+        }
+        
         if (records.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        stringResource(R.string.tests_empty_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        stringResource(R.string.tests_empty_sub),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp, start = 32.dp, end = 32.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
+            item {
+                StandardEmptyState(
+                    title = stringResource(R.string.tests_empty_title),
+                    subtitle = stringResource(R.string.tests_empty_sub)
+                )
             }
         } else {
-            val sorted = remember(records) { records.sortedByDescending { it.date } }
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                item {
-                    Text(
-                        text = stringResource(R.string.tests_title),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
+            sortedRecords.forEachIndexed { index, record ->
+                item(key = record.id) {
+                    RecordCard(
+                        record = record,
+                        dateFormat = dateFormat,
+                        onLongClick = { recordToDelete = record }
                     )
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                }
-                item(key = "summary") {
-                    SummaryCard(sorted)
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                }
-                sorted.forEachIndexed { index, record ->
-                    item(key = record.id) {
-                        RecordCard(
-                            record = record,
-                            dateFormat = dateFormat,
-                            onLongClick = { recordToDelete = record }
-                        )
-                        if (index < sorted.lastIndex) {
-                            TimeSeparator(record.date, sorted[index + 1].date)
-                        }
+                    if (index < sortedRecords.lastIndex) {
+                        TimeSeparator(record.date, sortedRecords[index + 1].date)
                     }
                 }
-                item { Spacer(Modifier.height(80.dp)) }
             }
         }
     }
@@ -217,36 +182,38 @@ private fun TestsScreen(
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
-private fun RecordCard(
-    record: TestsRecord,
-    dateFormat: SimpleDateFormat,
-    onLongClick: () -> Unit
+private fun TestCard(
+    title: String,
+    subtitle: String? = null,
+    badgeContent: @Composable (() -> Unit)? = null,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    containerColor: Color,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    val grouped = record.tests
-        .filter { it.result != TestResult.NOT_TESTED }
-        .groupBy { it.result }
-    val resultPriority = listOf(TestResult.POSITIVE, TestResult.TAKE_CARE, TestResult.VACCINATED, TestResult.NEGATIVE)
-    val uniqueResults = resultPriority.filter { it in grouped }
-    val testedCount = record.tests.count { it.result != TestResult.NOT_TESTED }
-
-    var expanded by remember { mutableStateOf(false) }
     val chevronAngle by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "chevron")
 
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            containerColor = containerColor
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        // Header — tap to expand, long-press to delete
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .combinedClickable(
-                    onLongClick = onLongClick,
-                    onClick = { expanded = !expanded }
-                )
+                .let { mod ->
+                    if (onLongClick != null) {
+                        mod.combinedClickable(
+                            onLongClick = onLongClick,
+                            onClick = { onExpandedChange(!expanded) }
+                        )
+                    } else {
+                        mod.clickable { onExpandedChange(!expanded) }
+                    }
+                }
                 .padding(16.dp)
         ) {
             Row(
@@ -254,23 +221,26 @@ private fun RecordCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = dateFormat.format(Date(record.date)),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Column {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    subtitle?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    uniqueResults.forEach { result ->
-                        Icon(
-                            painter = painterResource(result.iconRes()),
-                            contentDescription = result.label(),
-                            tint = result.color(),
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
+                    badgeContent?.invoke()
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
@@ -279,16 +249,9 @@ private fun RecordCard(
                     )
                 }
             }
-            Text(
-                text = "$testedCount test${if (testedCount != 1) "s" else ""} recorded",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp)
-            )
         }
 
-        // Expanded body
-        AnimatedVisibility(visible = expanded) {
+        if (expanded) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -296,228 +259,235 @@ private fun RecordCard(
             ) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Spacer(Modifier.height(12.dp))
-
-                uniqueResults.forEach { result ->
-                    val tests = grouped[result] ?: return@forEach
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(result.iconRes()),
-                            contentDescription = null,
-                            tint = result.color(),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.size(6.dp))
-                        Text(
-                            text = result.label(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    ) {
-                        tests.forEach { test ->
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        color = result.color().copy(alpha = 0.12f),
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = test.disease,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = result.color()
-                                )
-                            }
-                        }
-                    }
-                }
-                if (record.fileUri != null) {
-                    Text(
-                        text = stringResource(R.string.tests_has_attachment),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                content()
             }
         }
     }
 }
 
-private fun TestResult.label() = when (this) {
-    TestResult.POSITIVE   -> "Positive"
-    TestResult.NEGATIVE   -> "Negative"
-    TestResult.VACCINATED -> "Vaccinated"
-    TestResult.TAKE_CARE  -> "Take care"
-    TestResult.NOT_TESTED -> "Not tested"
-}
+/**
+ * Shared data class for processed test results
+ */
+private data class ProcessedTestResults(
+    val grouped: Map<TestResult, List<DiseaseTest>>,
+    val uniqueResults: List<TestResult>,
+    val testedCount: Int
+)
 
-private fun TestResult.iconRes() = when (this) {
-    TestResult.POSITIVE   -> R.drawable.health_cross_24px
-    TestResult.NEGATIVE   -> R.drawable.assignment_turned_in_24px
-    TestResult.VACCINATED -> R.drawable.syringe_24px
-    TestResult.TAKE_CARE  -> R.drawable.gpp_maybe_24px
-    TestResult.NOT_TESTED -> R.drawable.indeterminate_question_box_24px
+/**
+ * Result priority for consistent ordering across the app
+ */
+private val resultPriority = listOf(TestResult.POSITIVE, TestResult.TAKE_CARE, TestResult.VACCINATED, TestResult.NEGATIVE)
+
+/**
+ * Process test results by filtering NOT_TESTED and grouping by result
+ */
+private fun processTestResults(tests: List<DiseaseTest>): ProcessedTestResults {
+    val filtered = tests.filter { it.result != TestResult.NOT_TESTED }
+    val grouped = filtered.groupBy { it.result }
+    val uniqueResults = resultPriority.filter { it in grouped }
+    
+    return ProcessedTestResults(
+        grouped = grouped,
+        uniqueResults = uniqueResults,
+        testedCount = filtered.size
+    )
 }
 
 @Composable
-private fun TestResult.color(): Color {
-    val dark = isSystemInDarkTheme()
-    return when (this) {
-        TestResult.POSITIVE   -> if (dark) Color(0xFFFF8A80) else Color(0xFFE53935)
-        TestResult.NEGATIVE   -> if (dark) Color(0xFF69F0AE) else Color(0xFF4CAF50)
-        TestResult.VACCINATED -> if (dark) Color(0xFF82B1FF) else Color(0xFF1E88E5)
-        TestResult.TAKE_CARE  -> if (dark) Color(0xFFFFE082) else Color(0xFFFFC107)
-        TestResult.NOT_TESTED -> if (dark) Color(0xFFBDBDBD) else Color(0xFF9E9E9E)
+private fun StatusBadge(result: TestResult, count: Int) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            painter = painterResource(result.getStatusIcon()),
+            contentDescription = result.getStatusLabel(),
+            tint = result.getStatusColor(),
+            modifier = Modifier.size(22.dp)
+        )
+        Text(
+            text = "$count",
+            style = MaterialTheme.typography.labelSmall,
+            color = result.getStatusColor(),
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            modifier = Modifier.padding(top = 1.dp)
+        )
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SummaryCard(sorted: List<TestsRecord>) {
-    val resultPriority = listOf(TestResult.POSITIVE, TestResult.VACCINATED, TestResult.NEGATIVE)
+private fun RecordDetails(
+    uniqueResults: List<TestResult>,
+    grouped: Map<TestResult, List<DiseaseTest>>
+) {
+    uniqueResults.forEachIndexed { groupIndex, result ->
+        val diseases = grouped[result] ?: return@forEachIndexed
 
-    val latestByDisease = remember(sorted) {
-        val map = linkedMapOf<String, TestResult>()
-        sorted.forEach { record ->
-            record.tests
-                .filter { it.result != TestResult.NOT_TESTED && it.result != TestResult.TAKE_CARE }
-                .forEach { test ->
-                    if (test.disease !in map) {
-                        map[test.disease] = test.result
-                    }
-                }
-        }
-        map
-    }
+        if (groupIndex > 0) Spacer(Modifier.height(12.dp))
 
-    if (latestByDisease.isEmpty()) return
-
-    val grouped = latestByDisease.entries.groupBy { it.value }
-    val orderedResults = resultPriority.filter { it in grouped }
-    val diseaseCount = latestByDisease.size
-
-    var expanded by remember { mutableStateOf(false) }
-    val chevronAngle by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "summaryChevron")
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        // Header — tap to expand
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { expanded = !expanded }
-                .padding(16.dp)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 6.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Current Status",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    orderedResults.forEach { result ->
-                        Icon(
-                            painter = painterResource(result.iconRes()),
-                            contentDescription = result.label(),
-                            tint = result.color(),
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .rotate(chevronAngle)
-                    )
-                }
-            }
+            Icon(
+                painter = painterResource(result.getStatusIcon()),
+                contentDescription = null,
+                tint = result.getStatusColor(),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.size(6.dp))
             Text(
-                text = "$diseaseCount disease${if (diseaseCount != 1) "s" else ""} tracked",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp)
+                text = result.getStatusLabel(),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        // Collapsible body
-        AnimatedVisibility(visible = expanded) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
-            ) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Spacer(Modifier.height(12.dp))
-
-                orderedResults.forEachIndexed { groupIndex, result ->
-                    val diseases = grouped[result] ?: return@forEachIndexed
-
-                    if (groupIndex > 0) Spacer(Modifier.height(12.dp))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(result.iconRes()),
-                            contentDescription = null,
-                            tint = result.color(),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.size(6.dp))
-                        Text(
-                            text = result.label(),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        diseases.forEach { entry ->
-                            Box(
-                                modifier = Modifier
-                                    .background(
-                                        color = result.color().copy(alpha = 0.12f),
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = entry.key,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = result.color()
-                                )
-                            }
-                        }
-                    }
-                }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            diseases.sortedBy { getDiseaseSortWeight(it.disease) }.forEach { entry ->
+                DiseaseChip(entry.disease, entry.result.getStatusColor())
             }
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TimelineDetails(
+    testsByDate: Map<Long, List<DiseaseTest>>,
+    dateFormat: SimpleDateFormat
+) {
+    val sortedDates = testsByDate.keys.sortedDescending()
+    
+    sortedDates.forEachIndexed { dateIndex, date ->
+        val tests = testsByDate[date] ?: return@forEachIndexed
+        
+        if (dateIndex > 0) Spacer(Modifier.height(12.dp))
+        
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 6.dp)
+        ) {
+            Text(
+                text = dateFormat.format(Date(date)),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            tests.sortedBy { getDiseaseSortWeight(it.disease) }.forEach { test ->
+                DiseaseChip(test.disease, test.result.getStatusColor())
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiseaseChip(disease: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .background(
+                color = color.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = disease,
+            style = MaterialTheme.typography.labelMedium,
+            color = color
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecordCard(
+    record: TestsRecord,
+    dateFormat: SimpleDateFormat,
+    onLongClick: () -> Unit
+) {
+    val processed = processTestResults(record.tests)
+    var expanded by remember { mutableStateOf(false) }
+
+    TestCard(
+        title = dateFormat.format(Date(record.date)),
+        subtitle = "${processed.testedCount} test${if (processed.testedCount != 1) "s" else ""} recorded",
+        badgeContent = {
+            processed.uniqueResults.forEach { result ->
+                StatusBadge(result, processed.grouped[result]?.size ?: 0)
+            }
+        },
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        onLongClick = onLongClick,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer
+    ) {
+        RecordDetails(processed.uniqueResults, processed.grouped)
+    }
+}
+
+@Composable
+private fun SummaryCard(records: List<TestsRecord>) {
+    val allTests = records.flatMap { it.tests }
+    val groupedByDisease = allTests.groupBy { it.disease }
+    val diseaseCount = groupedByDisease.size
+
+    // For each disease, find the most recent result
+    val latestResults = groupedByDisease.mapValues { (_, tests) ->
+        tests.maxBy { test ->
+            records.find { it.tests.contains(test) }?.date ?: 0L
+        }
+    }.values.toList()
+
+    val processed = processTestResults(latestResults)
+    var expanded by remember { mutableStateOf(false) }
+
+    // When there are no tests, show NO_TEST status
+    val displayResults = if (processed.uniqueResults.isEmpty()) {
+        listOf(TestResult.NOT_TESTED)
+    } else {
+        processed.uniqueResults
+    }
+    
+    val displayGrouped = if (processed.uniqueResults.isEmpty()) {
+        mapOf(TestResult.NOT_TESTED to listOf(DiseaseTest("No tests", TestResult.NOT_TESTED)))
+    } else {
+        processed.grouped
+    }
+
+    // Find the worst result for background color, or use NOT_TESTED if no results
+    val worstResult = resultPriority.find { it in processed.grouped } ?: TestResult.NOT_TESTED
+
+    // Group latest tests by date for timeline view
+    val testsByDate = latestResults.groupBy { 
+        records.find { record -> record.tests.contains(it) }?.date ?: 0L 
+    }
+
+    TestCard(
+        title = "Current Status",
+        subtitle = if (diseaseCount == 0) "No tests recorded" else "$diseaseCount disease${if (diseaseCount != 1) "s" else ""} tested total",
+        badgeContent = {
+            displayResults.forEach { result ->
+                StatusBadge(result, displayGrouped[result]?.size ?: 0)
+            }
+        },
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        onLongClick = null,
+        containerColor = worstResult.let {
+            it.getStatusColor().copy(alpha = 0.25f)
+        }
+    ) {
+        TimelineDetails(testsByDate, SimpleDateFormat("dd MMM yyyy", Locale.getDefault()))
     }
 }
 
@@ -525,8 +495,9 @@ private fun SummaryCard(sorted: List<TestsRecord>) {
 private fun TimeSeparator(newerMillis: Long, olderMillis: Long) {
     Row(
         modifier = Modifier
-            .padding(vertical = 6.dp, horizontal = 4.dp),
+            .padding(vertical = 3.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
     ) {
         Icon(
             painter = painterResource(R.drawable.arrows_outward_24px),
@@ -568,4 +539,24 @@ private fun formatTimeDelta(newerMillis: Long, olderMillis: Long): String {
     if (months > 0) parts.add("$months month${if (months != 1) "s" else ""}")
     parts.add("$days day${if (days != 1) "s" else ""}")
     return parts.joinToString(", ")
+}
+
+/**
+ * Returns a weight for disease sorting to group by category in a standard medical order.
+ * Blood-borne/Systemic first, then Bacterial STIs, then others.
+ */
+private fun getDiseaseSortWeight(disease: String): Int {
+    val d = disease.lowercase()
+    return when {
+        d == "hiv" -> 1
+        d == "syphilis" -> 2
+        d.contains("hepatitis") -> 3
+        d == "gonorrhea" -> 10
+        d == "chlamydia" -> 11
+        d.contains("mycoplasma") -> 12
+        d == "trichomoniasis" -> 13
+        d.contains("herpes") -> 20
+        d == "hpv" -> 30
+        else -> 100
+    }
 }

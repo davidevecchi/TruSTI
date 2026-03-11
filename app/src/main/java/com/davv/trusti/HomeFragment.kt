@@ -14,6 +14,7 @@ import com.davv.trusti.databinding.FragmentHomeBinding
 import com.davv.trusti.model.Contact
 import com.davv.trusti.smp.P2PMessenger
 import com.davv.trusti.utils.ContactStore
+import com.davv.trusti.utils.FontExtensions
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.flow.launchIn
@@ -92,6 +93,10 @@ class HomeFragment : Fragment() {
                 setOrientationLocked(false)
             })
         }
+        
+        // Apply custom font to title and button
+        FontExtensions.applyTsukimiFontFromResources(binding.txtTitle, requireContext(), 400)
+        FontExtensions.applyTsukimiFontFromResources(binding.btnScan, requireContext(), 500)
     }
 
     override fun onResume() {
@@ -102,7 +107,7 @@ class HomeFragment : Fragment() {
     private fun updateQr() {
         val keyPair = KeyManager.getOrCreateKeyPair(requireContext())
         val pubKeyB64 = KeyManager.publicKeyToBase64Url(keyPair.public)
-        binding.imgQr.setImageBitmap(QrHelper.generateBitmap(pubKeyB64, null, null))
+        binding.imgQr.setImageBitmap(QrHelper.generateBitmap(requireContext(), pubKeyB64, null, null))
     }
 
     override fun onDestroyView() {

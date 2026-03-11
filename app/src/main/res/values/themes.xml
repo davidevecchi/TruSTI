@@ -30,6 +30,57 @@
         <item name="colorErrorContainer">@color/md_error_container</item>
         <item name="colorOnErrorContainer">@color/md_on_error_container</item>
         <!-- Status / nav bar -->
-        <item name="android:statusBarColor" tools:targetApi="21">?attr/colorSurface</item>
+        <item name="android:statusBarColor">?attr/colorSurface</item>
+        
+        <!-- Global font (default to system) -->
+        <item name="android:fontFamily">sans-serif</item>
+
+        <!-- Typography system -->
+        <item name="textAppearanceDisplayLarge">@style/TextAppearance.TruSTI.DisplayLarge</item>
+        <item name="textAppearanceDisplayMedium">@style/TextAppearance.TruSTI.DisplayMedium</item>
+        <item name="textAppearanceDisplaySmall">@style/TextAppearance.TruSTI.DisplaySmall</item>
+        <item name="textAppearanceHeadlineLarge">@style/TextAppearance.TruSTI.HeadlineLarge</item>
+        <item name="textAppearanceHeadlineMedium">@style/TextAppearance.TruSTI.HeadlineMedium</item>
+        <item name="textAppearanceHeadlineSmall">@style/TextAppearance.TruSTI.HeadlineSmall</item>
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.TruSTI.TitleLarge</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.TruSTI.TitleMedium</item>
+        <item name="textAppearanceTitleSmall">@style/TextAppearance.TruSTI.TitleSmall</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.TruSTI.BodyLarge</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.TruSTI.BodyMedium</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.TruSTI.BodySmall</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.TruSTI.LabelLarge</item>
+        <item name="textAppearanceLabelMedium">@style/TextAppearance.TruSTI.LabelMedium</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.TruSTI.LabelSmall</item>
+    </style>
+
+    <!-- Dark theme -->
+    <style name="Theme.TruSTI.Dark" parent="Theme.TruSTI">
+        <item name="colorPrimary">@color/md_primary_dark</item>
+        <item name="colorOnPrimary">@color/md_on_primary_dark</item>
+        <item name="colorPrimaryContainer">@color/md_primary_container_dark</item>
+        <item name="colorOnPrimaryContainer">@color/md_on_primary_container_dark</item>
+        
+        <item name="colorSecondary">@color/md_secondary_dark</item>
+        <item name="colorOnSecondary">@color/md_on_secondary_dark</item>
+        <item name="colorSecondaryContainer">@color/md_secondary_container_dark</item>
+        <item name="colorOnSecondaryContainer">@color/md_on_secondary_container_dark</item>
+        
+        <item name="android:colorBackground">@color/md_background_dark</item>
+        <item name="colorOnBackground">@color/md_on_background_dark</item>
+        <item name="colorSurface">@color/md_surface_dark</item>
+        <item name="colorOnSurface">@color/md_on_surface_dark</item>
+        <item name="colorSurfaceVariant">@color/md_surface_variant_dark</item>
+        <item name="colorOnSurfaceVariant">@color/md_on_surface_variant_dark</item>
+        <item name="colorOutline">@color/md_outline_dark</item>
+        <item name="colorOutlineVariant">@color/md_outline_variant_dark</item>
+        
+        <item name="colorSurfaceInverse">@color/md_inverse_surface_dark</item>
+        <item name="colorOnSurfaceInverse">@color/md_inverse_on_surface_dark</item>
+        <item name="colorPrimaryInverse">@color/md_inverse_primary_dark</item>
+        
+        <item name="colorError">@color/md_error_dark</item>
+        <item name="colorOnError">@color/md_on_error_dark</item>
+        <item name="colorErrorContainer">@color/md_error_container_dark</item>
+        <item name="colorOnErrorContainer">@color/md_on_error_container_dark</item>
     </style>
 </resources>

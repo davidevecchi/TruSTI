@@ -2,6 +2,7 @@ package com.davv.trusti
 
 import android.app.AlertDialog
 import android.content.Context
+import android.graphics.Typeface
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -10,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import com.davv.trusti.databinding.ActivityMainBinding
 import com.davv.trusti.smp.P2PMessenger
 import com.davv.trusti.utils.ContactStore
+import com.davv.trusti.utils.FontExtensions
 import com.davv.trusti.utils.TestsStore
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -24,8 +26,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Apply saved theme before inflating views
-        val savedMode = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt(SettingsFragment.KEY_THEME, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        val savedMode = getSharedPreferences(SettingsFragmentCompanion.PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(SettingsFragmentCompanion.KEY_THEME, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
         AppCompatDelegate.setDefaultNightMode(savedMode)
 
         super.onCreate(savedInstanceState)
@@ -34,21 +36,24 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch { P2PMessenger.get(this@MainActivity).initialize() }
 
+        // Update test count badge when tests change
+        updateTestCountBadge()
+
         P2PMessenger.get(this).peerEventFlow
             .onEach { event -> handlePeerEvent(event) }
             .launchIn(lifecycleScope)
 
         if (savedInstanceState == null) {
             val home = HomeFragment()
-            val contacts = ContactsFragment()
+            val bonds = BondsFragment()
             val Tests = TestsFragment()
             val settings = SettingsFragment()
             supportFragmentManager.beginTransaction()
                 .add(R.id.fragmentContainer, home, TAG_HOME)
-                .add(R.id.fragmentContainer, contacts, TAG_CONTACTS)
+                .add(R.id.fragmentContainer, bonds, TAG_CONTACTS)
                 .add(R.id.fragmentContainer, Tests, TAG_TESTS)
                 .add(R.id.fragmentContainer, settings, TAG_SETTINGS)
-                .hide(contacts)
+                .hide(bonds)
                 .hide(Tests)
                 .hide(settings)
                 .commit()
@@ -90,7 +95,7 @@ class MainActivity : AppCompatActivity() {
                 val name = contact?.name ?: event.fromPublicKey.take(12)
                 AlertDialog.Builder(this)
                     .setTitle("Status request")
-                    .setMessage("$name wants to see your test results.")
+                    .setMessage("$name wants to see your tests.")
                     .setPositiveButton("Share") { _, _ ->
                         if (contact != null) {
                             P2PMessenger.get(this).sendStatusResponse(contact, TestsStore.load(this))
@@ -105,7 +110,7 @@ class MainActivity : AppCompatActivity() {
                     .firstOrNull { it.publicKey == event.fromPublicKey }
                 val name = contact?.name ?: event.fromPublicKey.take(12)
                 val sdf = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-                val body = if (event.records.isEmpty()) "No records shared." else
+                val body = if (event.records.isEmpty()) "No tests shared." else
                     event.records.joinToString("\n\n") { r ->
                         val date = sdf.format(Date(r.date))
                         val tests = r.tests.joinToString("\n") { t ->
@@ -114,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                         "$date\n$tests"
                     }
                 AlertDialog.Builder(this)
-                    .setTitle("$name's test results")
+                    .setTitle("$name's tests")
                     .setMessage(body)
                     .setPositiveButton("OK", null)
                     .show()
@@ -129,6 +134,37 @@ class MainActivity : AppCompatActivity() {
                 if (t == tag) show(f) else hide(f)
             }
         }.commit()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateTestCountBadge()
+    }
+
+    private fun updateTestCountBadge() {
+        val testCount = TestsStore.load(this).size
+        val testsMenuItem = binding.bottomNav.menu.findItem(R.id.nav_tests)
+        
+        if (testCount > 0) {
+            // Create badge text (show "99+" for counts > 99)
+            val badgeText = if (testCount > 99) "99+" else testCount.toString()
+            
+            // Use a custom view for the menu item with badge
+            val badgeView = layoutInflater.inflate(R.layout.badge_indicator, null)
+            val iconView = badgeView.findViewById<android.widget.ImageView>(R.id.icon)
+            val badgeTextView = badgeView.findViewById<android.widget.TextView>(R.id.badge)
+            
+            iconView.setImageResource(R.drawable.diagnosis_24px)
+            badgeTextView.text = badgeText
+            badgeTextView.visibility = android.view.View.VISIBLE
+            
+            // Apply Tsukimi font to the badge text
+            FontExtensions.applyTsukimiFont(badgeTextView, Typeface.BOLD)
+            
+            testsMenuItem.actionView = badgeView
+        } else {
+            testsMenuItem.actionView = null
+        }
     }
 
     companion object {
