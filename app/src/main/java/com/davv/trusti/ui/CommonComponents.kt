@@ -11,12 +11,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,37 +35,51 @@ import com.davv.trusti.R
  * Standard page layout with consistent margins, title, and scrolling content area.
  * Used across all main screens (Tests, Bonds, Settings) to ensure theme consistency.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StandardPageLayout(
     title: String,
     floatingActionButton: @Composable () -> Unit = {},
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
+    isRefreshing: Boolean = false,
+    onRefresh: (() -> Unit)? = null,
+    listState: LazyListState = rememberLazyListState(),
     content: LazyListScope.() -> Unit
 ) {
     Scaffold(
         floatingActionButton = floatingActionButton
     ) { padding ->
-        LazyColumn(
+        val pullToRefreshState = rememberPullToRefreshState()
+        
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { onRefresh?.invoke() },
+            state = pullToRefreshState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
-            verticalArrangement = verticalArrangement
+                .padding(padding)
         ) {
-            item {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
-                )
-            }
-            
-            content()
-            
-            // Bottom spacer to ensure content isn't hidden behind FAB
-            item {
-                Spacer(Modifier.height(80.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+                verticalArrangement = verticalArrangement
+            ) {
+                item {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
+                    )
+                }
+                
+                content()
+                
+                // Bottom spacer to ensure content isn't hidden behind FAB
+                item {
+                    Spacer(Modifier.height(80.dp))
+                }
             }
         }
     }

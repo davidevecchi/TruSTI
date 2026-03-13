@@ -40,8 +40,7 @@ class HomeFragment : Fragment() {
 
             val contact = Contact(
                 name = "Peer ${info.publicKey.take(8)}",
-                publicKey = info.publicKey,
-                lastSeen = System.currentTimeMillis()
+                publicKey = info.publicKey
             )
             ContactStore.save(requireContext(), contact)
             Log.d(TAG, "Contact saved: ${contact.publicKey.take(8)}")
@@ -53,7 +52,7 @@ class HomeFragment : Fragment() {
             ).show()
 
             val messenger = P2PMessenger.get(requireContext())
-            Log.d(TAG, "isConnected=${messenger.isConnected.value} — starting handshake")
+            Log.d(TAG, "isTrackerConnected=${messenger.isTrackerConnected.value} — starting handshake")
             messenger.startHandshake(contact)
 
             updateQr()
@@ -81,7 +80,7 @@ class HomeFragment : Fragment() {
         updateQr()
         val messenger = P2PMessenger.get(requireContext())
         
-        messenger.isConnected
+        messenger.isTrackerConnected
             .onEach { if (it) updateQr() }
             .launchIn(viewLifecycleOwner.lifecycleScope)
 

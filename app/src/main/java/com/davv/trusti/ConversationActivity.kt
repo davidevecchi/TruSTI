@@ -40,7 +40,6 @@ class ConversationActivity : AppCompatActivity() {
             Contact(
                 name = o.getString("name"),
                 publicKey = o.getString("publicKey"),
-                lastSeen = o.getLong("lastSeen"),
                 disambiguation = o.optString("disambiguation").takeIf { it.isNotEmpty() }
             )
         }
@@ -109,7 +108,6 @@ class ConversationActivity : AppCompatActivity() {
             val json = JSONObject().apply {
                 put("name", contact.name)
                 put("publicKey", contact.publicKey)
-                put("lastSeen", contact.lastSeen)
                 put("disambiguation", contact.disambiguation ?: "")
             }.toString()
             context.startActivity(

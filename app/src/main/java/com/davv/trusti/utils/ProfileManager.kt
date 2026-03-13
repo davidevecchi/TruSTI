@@ -7,6 +7,9 @@ object ProfileManager {
     private const val PREFS = "trusti_profile"
     private const val KEY_USERNAME = "username"
     private const val KEY_DISAMBIGUATION = "disambiguation"
+    private const val KEY_SHARE_STATUS = "share_status"
+    private const val KEY_SHARE_COUNTER = "share_counter"
+    private const val KEY_SHARE_HISTORY = "share_history"
 
     private val adjectives = listOf(
         "swift", "quiet", "brave", "bright", "calm", "cool", "eager", "fair", "gentle", "happy",
@@ -37,6 +40,30 @@ object ProfileManager {
             disambiguation = rollDisambiguation(context)
         }
         return disambiguation
+    }
+
+    fun getShareStatus(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHARE_STATUS, false)
+
+    fun setShareStatus(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_SHARE_STATUS, value).apply()
+    }
+
+    fun getShareCounter(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHARE_COUNTER, false)
+
+    fun setShareCounter(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_SHARE_COUNTER, value).apply()
+    }
+
+    fun getShareHistory(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHARE_HISTORY, false)
+
+    fun setShareHistory(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_SHARE_HISTORY, value).apply()
     }
 
     fun rollDisambiguation(context: Context): String {

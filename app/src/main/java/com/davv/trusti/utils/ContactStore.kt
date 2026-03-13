@@ -29,8 +29,17 @@ object ContactStore {
             JSONObject().apply {
                 put("name", c.name)
                 put("publicKey", c.publicKey)
-                put("lastSeen", c.lastSeen)
                 put("disambig", c.disambiguation ?: "")
+                c.diseaseStatus?.let { status ->
+                    put("diseaseStatus", JSONObject().apply {
+                        put("positiveCount", status.positiveCount)
+                        put("negativeCount", status.negativeCount)
+                        put("vaccinatedCount", status.vaccinatedCount)
+                        put("takeCareCount", status.takeCareCount)
+                        put("notTestedCount", status.notTestedCount)
+                        put("lastUpdated", status.lastUpdated)
+                    })
+                }
             }
         })
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -44,11 +53,24 @@ object ContactStore {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { i ->
                 arr.getJSONObject(i).let { obj ->
+                    val diseaseStatus = obj.optJSONObject("diseaseStatus")?.let { status ->
+                        val positiveCount = status.optInt("positiveCount", 0)
+                        com.davv.trusti.model.DiseaseStatus(
+                            positiveCount = positiveCount,
+                            negativeCount = status.optInt("negativeCount", 0),
+                            vaccinatedCount = status.optInt("vaccinatedCount", 0),
+                            takeCareCount = status.optInt("takeCareCount", 0),
+                            notTestedCount = status.optInt("notTestedCount", 0),
+                            lastUpdated = status.optLong("lastUpdated", System.currentTimeMillis()),
+                            hasPositive = positiveCount > 0
+                        )
+                    }
                     Contact(
                         name = obj.getString("name"),
                         publicKey = obj.getString("publicKey"),
-                        lastSeen = obj.getLong("lastSeen"),
-                        disambiguation = obj.optString("disambig").takeIf { it.isNotEmpty() }
+                        disambiguation = obj.optString("disambig").takeIf { it.isNotEmpty() },
+                        isConnected = false, // runtime-only; always false at startup
+                        diseaseStatus = diseaseStatus
                     )
                 }
             }

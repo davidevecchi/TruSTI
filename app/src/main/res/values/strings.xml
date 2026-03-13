@@ -14,6 +14,7 @@
     <string name="nav_connect">Connect</string>
     <string name="nav_bonds">Bonds</string>
     <string name="nav_tests">Tests</string>
+    <string name="nav_profile">Profile</string>
     <string name="nav_settings">Settings</string>
 
     <!-- Bonds screen -->
@@ -59,6 +60,12 @@
     <string name="tests_delete_title">Delete test</string>
     <string name="tests_delete_message">Remove \"%s\"?</string>
     <string name="tests_delete_confirm">Delete</string>
+
+    <!-- Incoming bond request dialog -->
+    <string name="bond_request_title">Bond request</string>
+    <string name="bond_request_message">Someone wants to bond with you.\n\nKey: %s…\n\nDo you want to accept?</string>
+    <string name="bond_request_accept">Accept</string>
+    <string name="bond_request_decline">Decline</string>
 
     <!-- Status labels -->
     <string name="status_positive">Positive</string>

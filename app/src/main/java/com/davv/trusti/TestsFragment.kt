@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -50,18 +49,21 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.davv.trusti.model.DiseaseTest
 import com.davv.trusti.model.TestResult
 import com.davv.trusti.model.TestsRecord
+import com.davv.trusti.ui.StandardAddFab
+import com.davv.trusti.ui.StandardEmptyState
+import com.davv.trusti.ui.StandardPageLayout
+import com.davv.trusti.ui.StandardSectionDivider
 import com.davv.trusti.ui.TruSTITheme
 import com.davv.trusti.ui.getStatusColor
 import com.davv.trusti.ui.getStatusIcon
 import com.davv.trusti.ui.getStatusLabel
-import com.davv.trusti.ui.StandardPageLayout
-import com.davv.trusti.ui.StandardEmptyState
-import com.davv.trusti.ui.StandardAddFab
-import com.davv.trusti.ui.StandardSectionDivider
 import com.davv.trusti.utils.TestsStore
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -70,6 +72,7 @@ import java.util.Locale
 class TestsFragment : Fragment() {
 
     private var records by mutableStateOf<List<TestsRecord>>(emptyList())
+    private var isRefreshing by mutableStateOf(false)
 
     private val addRecordLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -83,6 +86,8 @@ class TestsFragment : Fragment() {
             TruSTITheme {
                 TestsScreen(
                     records = records,
+                    isRefreshing = isRefreshing,
+                    onRefresh = { refreshRecords() },
                     onAddRecord = {
                         addRecordLauncher.launch(
                             Intent(requireContext(), AddRecordActivity::class.java)
@@ -106,11 +111,24 @@ class TestsFragment : Fragment() {
         super.onHiddenChanged(hidden)
         if (!hidden) records = TestsStore.load(requireContext())
     }
+
+    private fun refreshRecords() {
+        if (isRefreshing) return
+        isRefreshing = true
+        lifecycleScope.launch {
+            // Simulated refresh delay for UX consistency
+            delay(1000)
+            records = TestsStore.load(requireContext())
+            isRefreshing = false
+        }
+    }
 }
 
 @Composable
 private fun TestsScreen(
     records: List<TestsRecord>,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onAddRecord: () -> Unit,
     onDelete: (String) -> Unit
 ) {
@@ -141,6 +159,8 @@ private fun TestsScreen(
 
     StandardPageLayout(
         title = stringResource(R.string.tests_title),
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
         floatingActionButton = {
             StandardAddFab(
                 text = stringResource(R.string.tests_add),
@@ -155,7 +175,7 @@ private fun TestsScreen(
             StandardSectionDivider()
             Spacer(Modifier.height(6.dp)) // Increased space after summary card
         }
-        
+
         if (records.isEmpty()) {
             item {
                 StandardEmptyState(
@@ -192,7 +212,10 @@ private fun TestCard(
     containerColor: Color,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val chevronAngle by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "chevron")
+    val chevronAngle by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "chevron"
+    )
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -245,7 +268,9 @@ private fun TestCard(
                         imageVector = Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp).rotate(chevronAngle)
+                        modifier = Modifier
+                            .size(20.dp)
+                            .rotate(chevronAngle)
                     )
                 }
             }
@@ -277,7 +302,8 @@ private data class ProcessedTestResults(
 /**
  * Result priority for consistent ordering across the app
  */
-private val resultPriority = listOf(TestResult.POSITIVE, TestResult.TAKE_CARE, TestResult.VACCINATED, TestResult.NEGATIVE)
+private val resultPriority =
+    listOf(TestResult.POSITIVE, TestResult.TAKE_CARE, TestResult.VACCINATED, TestResult.NEGATIVE)
 
 /**
  * Process test results by filtering NOT_TESTED and grouping by result
@@ -286,7 +312,7 @@ private fun processTestResults(tests: List<DiseaseTest>): ProcessedTestResults {
     val filtered = tests.filter { it.result != TestResult.NOT_TESTED }
     val grouped = filtered.groupBy { it.result }
     val uniqueResults = resultPriority.filter { it in grouped }
-    
+
     return ProcessedTestResults(
         grouped = grouped,
         uniqueResults = uniqueResults,
@@ -348,7 +374,11 @@ private fun RecordDetails(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            diseases.sortedBy { getDiseaseSortWeight(it.disease) }.forEach { entry ->
+            diseases.sortedWith(compareBy<DiseaseTest> { getDiseaseCategoryWeight(it.disease) }.thenBy {
+                getDiseaseSortWeight(
+                    it.disease
+                )
+            }).forEach { entry ->
                 DiseaseChip(entry.disease, entry.result.getStatusColor())
             }
         }
@@ -362,12 +392,12 @@ private fun TimelineDetails(
     dateFormat: SimpleDateFormat
 ) {
     val sortedDates = testsByDate.keys.sortedDescending()
-    
+
     sortedDates.forEachIndexed { dateIndex, date ->
         val tests = testsByDate[date] ?: return@forEachIndexed
-        
+
         if (dateIndex > 0) Spacer(Modifier.height(12.dp))
-        
+
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(bottom = 6.dp)
@@ -379,12 +409,22 @@ private fun TimelineDetails(
             )
         }
 
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            tests.sortedBy { getDiseaseSortWeight(it.disease) }.forEach { test ->
-                DiseaseChip(test.disease, test.result.getStatusColor())
+        // Group tests by result status using existing resultPriority order
+        val testsByResult = tests.groupBy { it.result }
+
+        resultPriority.forEachIndexed { resultIndex, result ->
+            val resultTests = testsByResult[result]?.sortedBy { getDiseaseSortWeight(it.disease) }
+            if (!resultTests.isNullOrEmpty()) {
+                if (resultIndex > 0) Spacer(Modifier.height(8.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    resultTests.forEach { test ->
+                        DiseaseChip(test.disease, test.result.getStatusColor())
+                    }
+                }
             }
         }
     }
@@ -457,7 +497,7 @@ private fun SummaryCard(records: List<TestsRecord>) {
     } else {
         processed.uniqueResults
     }
-    
+
     val displayGrouped = if (processed.uniqueResults.isEmpty()) {
         mapOf(TestResult.NOT_TESTED to listOf(DiseaseTest("No tests", TestResult.NOT_TESTED)))
     } else {
@@ -468,8 +508,8 @@ private fun SummaryCard(records: List<TestsRecord>) {
     val worstResult = resultPriority.find { it in processed.grouped } ?: TestResult.NOT_TESTED
 
     // Group latest tests by date for timeline view
-    val testsByDate = latestResults.groupBy { 
-        records.find { record -> record.tests.contains(it) }?.date ?: 0L 
+    val testsByDate = latestResults.groupBy {
+        records.find { record -> record.tests.contains(it) }?.date ?: 0L
     }
 
     TestCard(
@@ -484,7 +524,7 @@ private fun SummaryCard(records: List<TestsRecord>) {
         onExpandedChange = { expanded = it },
         onLongClick = null,
         containerColor = worstResult.let {
-            it.getStatusColor().copy(alpha = 0.25f)
+            it.getStatusColor().copy(alpha = 0.24f)
         }
     ) {
         TimelineDetails(testsByDate, SimpleDateFormat("dd MMM yyyy", Locale.getDefault()))
@@ -539,6 +579,20 @@ private fun formatTimeDelta(newerMillis: Long, olderMillis: Long): String {
     if (months > 0) parts.add("$months month${if (months != 1) "s" else ""}")
     parts.add("$days day${if (days != 1) "s" else ""}")
     return parts.joinToString(", ")
+}
+
+/**
+ * Returns a category weight for disease grouping.
+ * 1 = Blood-borne/Systemic, 2 = Bacterial STIs, 3 = Viral, 4 = Others
+ */
+private fun getDiseaseCategoryWeight(disease: String): Int {
+    val d = disease.lowercase()
+    return when {
+        d == "hiv" || d == "syphilis" || d.contains("hepatitis") -> 1
+        d == "gonorrhea" || d == "chlamydia" || d.contains("mycoplasma") || d == "trichomoniasis" -> 2
+        d.contains("herpes") || d == "hpv" -> 3
+        else -> 4
+    }
 }
 
 /**

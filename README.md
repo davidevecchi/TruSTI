@@ -1,82 +1,155 @@
 # TruSTI
 
-A private, end-to-end encrypted Android messenger that uses **QR codes for identity bootstrapping** and **WebRTC for P2P message delivery** — inspired by the Chitchatter privacy model.
-
-No phone numbers. No account registration. No server-side identity. No custom server required.
+A privacy-first Android app for sharing STI test results with trusted contacts. Two people exchange a QR code once; after that they can share encrypted health status updates peer-to-peer, with no server ever seeing message content.
 
 ---
 
-## Architecture
+## How It Works
 
-The app is split into four layers:
+### 1. Identity & Key Exchange
 
-**UI** — `MainActivity` hosts fragments: `HomeFragment` (shows your QR, opens the scanner), `ContactsFragment` (list of saved contacts), and `SettingsFragment` (theme settings). Tapping a contact opens `ConversationActivity`, a RecyclerView chat screen.
+Every user has a permanent EC P-256 key pair generated on first launch and stored in SharedPreferences (`crypto/KeyManager.kt`). The public key is the user's identity — there is no account, username, or server registration.
 
-**Messaging** — `P2PMessenger` is a singleton that manages P2P connections. It exposes `initialize()`, `sendMessage()`, and a `messageFlow` SharedFlow that the UI observes for incoming messages.
+Adding a contact is done by scanning their QR code. The QR encodes a URI:
 
-**P2P / Transport** — `WebRtcTransport` manages RTCPeerConnection per contact. `TorrentSignaling` uses public WebTorrent trackers for exchanging WebRTC offers/answers. `Encryption` performs ECDH-ephemeral + AES-256-GCM on every payload.
+```
+trusti://peer?pk=<BASE64URL_PUBKEY>
+```
 
-**Crypto** — `KeyManager` generates and persists an EC P-256 key pair. `QrHelper` encodes/decodes the `trusti://` URI.
+This gives you their public key, which is all you need to:
+- Derive a shared signaling room for reconnection
+- Encrypt messages only they can read
 
-**Storage** — `ContactStore` and `MessageStore` persist contacts and messages as JSON in `SharedPreferences`.
+### 2. Signaling via WebTorrent Tracker
 
----
+Peers need to find each other to establish a direct connection. TruSTI uses a public WebTorrent tracker (`wss://tracker.openwebtorrent.com`) as a rendezvous point — the same infrastructure BitTorrent clients use to find peers for a torrent.
 
-## Key Exchange & Connection Flow
+**The tracker never sees message content.** It only routes WebRTC signaling messages (SDP offer/answer) between peers.
 
-1. On first launch, each device generates an EC P-256 key pair.
-2. The **Home** tab shows a QR code encoding `trusti://peer?pk=PUBKEY`.
-3. When a peer scans the QR:
-   - Both parties derive a shared **Room ID** = `SHA256(sort(myPubKey, theirPubKey))`.
-   - Both connect to a public WebTorrent tracker (e.g., `wss://tracker.openwebtorrent.com`).
-   - They announce the Room ID to the tracker to find each other and exchange WebRTC SDP offers/answers.
-   - A direct P2P WebRTC data channel is established.
-4. Messages flow directly between devices. The tracker never sees the content and is only used for the initial handshake.
+Two room types are used (both derived with SHA-256):
 
----
+| Room | Derivation | Purpose |
+|------|-----------|---------|
+| Handshake room | `sha256(B's public key)` | B listens here so A can reach them after scanning the QR |
+| Permanent room | `sha256(sort(A_key + B_key))` | Both peers announce here for reconnection after the first handshake |
 
-## Encryption
+On startup, the app announces itself in its own handshake room and in a permanent room for every saved contact.
 
-Every payload is end-to-end encrypted before leaving the device. 
+#### Signaling Message Flow
 
-Algorithm: ECDH-ephemeral + AES-256-GCM (on top of WebRTC's built-in DTLS)
+```
+A (offerer)  ──announceWithOffer──▶  Tracker  ──offer──▶  B (answerer)
+B (answerer) ──sendAnswer──────────▶  Tracker  ──answer──▶ A (offerer)
+                                      ▲
+                          (no relay — tracker only routes SDP)
+```
+
+Identity (public key, display name) is embedded in the SDP offer as custom `a=x-trusti-*` attributes, so B learns who is calling without needing a directory server.
+
+### 3. WebRTC Data Channel (Vanilla ICE)
+
+Once signaling completes, a WebRTC `RTCPeerConnection` with a `DataChannel` is established directly between the two devices (`smp/WebRtcTransport.kt`).
+
+TruSTI uses **vanilla ICE** (also called "complete ICE"): ICE gathering runs to completion before the SDP is sent, so all candidates are bundled in the SDP itself. This is necessary because the WebTorrent tracker doesn't relay arbitrary peer messages — only the structured announce format. Trickle ICE would require a separate signaling channel.
+
+NAT traversal uses:
+- Google STUN (`stun.l.google.com:19302`)
+- OpenRelay TURN (fallback when both peers are behind symmetric NAT)
+
+If the peer is offline when a message is sent, the handshake is initiated automatically and the message is delivered as soon as the data channel opens.
+
+### 4. End-to-End Encryption
+
+Every message is encrypted before being handed to WebRTC. Even if the data channel were intercepted, the content would be unreadable without the recipient's private key.
+
+**Algorithm: ECDH ephemeral + AES-256-GCM** (`smp/Encryption.kt`)
+
+```
+Encrypt(plaintext, recipientPublicKey):
+  1. Generate a fresh ephemeral EC P-256 key pair
+  2. ECDH(ephemeral_private, recipient_public) → shared_secret
+  3. SHA-256(shared_secret) → 256-bit AES key
+  4. Generate 12-byte random IV
+  5. AES-256-GCM encrypt(plaintext, key, IV) → ciphertext + 128-bit tag
 
 Wire format:
+  [2-byte big-endian ephPubLen][ephPubDER][12-byte IV][ciphertext+GCM-tag]
+```
 
-    [2 bytes: ephPubLen] [ephPubDER] [12-byte IV] [ciphertext + 16-byte GCM tag]
+```
+Decrypt(data, myPrivateKey):
+  1. Parse ephPubLen, ephPubDER, IV, ciphertext
+  2. ECDH(my_private, ephemeral_public) → shared_secret
+  3. SHA-256(shared_secret) → AES key
+  4. AES-256-GCM decrypt(ciphertext, key, IV) → plaintext
+     (authentication tag verified; fails loudly on tamper)
+```
+
+Each message uses a freshly generated ephemeral key pair, so there is no long-term shared secret and no key reuse across messages.
+
+### 5. Message Types
+
+All messages are JSON, encrypted as described above. Three types are defined:
+
+| `type` | Payload | Purpose |
+|--------|---------|---------|
+| `text` | `from`, `content`, `ts` | Chat message |
+| `status_request` | `from` | Ask the peer for their current test status |
+| `status_response` | `from`, `hasPositive`, `queuedAt?` | Reply with whether any test result is positive |
+
+Status responses that can't be delivered immediately (contact offline) are persisted locally in `PendingStatusStore` and sent as soon as the contact next connects.
+
+---
+
+## Privacy Properties
+
+| Property | How it's achieved |
+|----------|------------------|
+| No server stores messages | Messages travel over an encrypted WebRTC data channel directly between devices |
+| No server knows your identity | Your key pair is generated locally; the tracker only sees ephemeral peer IDs |
+| Forward secrecy per message | Each encryption uses a fresh ephemeral key — past messages can't be decrypted even if your long-term key is later compromised |
+| Authenticated encryption | AES-GCM provides integrity; a tampered message will fail decryption |
+| Contact discovery is private | Room IDs are SHA-256 hashes; the tracker cannot reverse them to learn who is talking to whom |
 
 ---
 
 ## Project Structure
 
-    app/src/main/java/com/davv/trusti/
-    ├── MainActivity.kt              Fragment host; initializes P2PMessenger
-    ├── HomeFragment.kt              Shows own QR + Scan Peer button
-    ├── ContactsFragment.kt          Contact list; tap → ConversationActivity
-    ├── ConversationActivity.kt      RecyclerView chat UI
-    ├── SettingsFragment.kt          Theme toggle
-    ├── crypto/
-    │   └── KeyManager.kt            EC P-256 key pair generation + SharedPreferences storage
-    ├── connection/
-    │   └── QrHelper.kt              QR bitmap generation + PeerInfo URI parsing
-    ├── model/
-    │   ├── Contact.kt               name, publicKey, lastSeen
-    │   └── Message.kt               id, contactPublicKey, content, timestamp, isOutbound
-    ├── utils/
-    │   ├── ContactStore.kt          JSON persistence for contacts
-    │   └── MessageStore.kt          Per-contact message persistence
-    └── smp/
-        ├── Encryption.kt            ECDH-ephemeral + AES-256-GCM encrypt/decrypt
-        ├── TorrentSignaling.kt      WebRTC signaling via public trackers
-        ├── WebRtcTransport.kt       WebRTC DataChannel management
-        └── P2PMessenger.kt          High-level P2P messaging logic
+```
+app/src/main/java/com/davv/trusti/
+├── crypto/
+│   └── KeyManager.kt          EC P-256 key pair generation and storage
+├── connection/
+│   └── QrHelper.kt            QR generation and PeerInfo parsing
+├── model/
+│   ├── Contact.kt             name, publicKey, lastSeen
+│   ├── Message.kt             chat message
+│   └── MedicalRecord.kt       test result (disease, date, POSITIVE/NEGATIVE)
+├── smp/
+│   ├── Encryption.kt          ECDH + AES-256-GCM encrypt/decrypt
+│   ├── TorrentSignaling.kt    WebTorrent tracker WebSocket client
+│   ├── WebRtcTransport.kt     RTCPeerConnection + DataChannel per contact
+│   └── P2PMessenger.kt        Singleton orchestrating signaling, transport, encryption
+├── utils/
+│   ├── ContactStore.kt        JSON persistence for contacts
+│   ├── MessageStore.kt        Per-contact message persistence
+│   ├── MedicalStore.kt        JSON persistence for medical records
+│   ├── PendingStatusStore.kt  Queued status updates for offline contacts
+│   └── ProfileManager.kt      Display name + disambiguation (adjective-noun)
+└── ui/
+    ├── CommonComponents.kt
+    ├── DiseaseTestResult.kt   Disease row with +/−/? chips
+    └── DiseaseTestList.kt     List of diseases with results
+```
 
 ---
 
-## Privacy Model
+## Build
 
-- **Serverless**: No custom servers to run or trust. Uses public infrastructure (trackers/STUN) only for discovery.
-- **No accounts**: Identity is a locally generated key pair.
-- **No enumeration**: Room IDs are derived from public keys; strangers cannot discover your "room".
-- **E2EE**: All messages are encrypted with keys known only to the two parties.
-- **P2P**: Messages travel directly between devices whenever possible.
+- minSdk 26 (Android 8.0)
+- targetSdk / compileSdk 36
+- Kotlin 2.0.21, AGP 8.7.3, Gradle 8.11+
+
+```bash
+./gradlew assembleDebug
+```
