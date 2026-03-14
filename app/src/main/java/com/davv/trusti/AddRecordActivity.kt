@@ -56,6 +56,7 @@ import com.davv.trusti.model.TestsRecord
 import com.davv.trusti.ui.DiseaseTestResult
 import com.davv.trusti.ui.TruSTITheme
 import com.davv.trusti.ui.TsukimiRounded
+import com.davv.trusti.smp.P2PMessenger
 import com.davv.trusti.utils.TestsStore
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -95,6 +96,7 @@ class AddRecordActivity : ComponentActivity() {
                             fileUri = attachedFileUri?.toString()
                         )
                         TestsStore.save(this@AddRecordActivity, record)
+                        P2PMessenger.get(this@AddRecordActivity).pushMyStatusToAll()
                         finish()
                     },
                     onDateChange = { date -> selectedDate = date },

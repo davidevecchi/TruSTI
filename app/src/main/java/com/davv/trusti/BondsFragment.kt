@@ -146,6 +146,7 @@ class BondsFragment : Fragment() {
                         updateContactConnectionStatus(event.contact.publicKey, false)
                     }
                     is P2PMessenger.PeerEvent.IncomingRequest -> Unit // handled in MainActivity
+                    is P2PMessenger.PeerEvent.BondRemoved -> loadBonds()
                 }
             }
             .launchIn(viewLifecycleOwner.lifecycleScope)

@@ -9,6 +9,7 @@ import com.davv.trusti.model.Message
 import com.davv.trusti.model.TestResult
 import com.davv.trusti.utils.ContactStore
 import com.davv.trusti.utils.MessageStore
+import com.davv.trusti.utils.PendingStatusStore
 import com.davv.trusti.utils.ProfileManager
 import com.davv.trusti.utils.TestsStore
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -26,6 +29,7 @@ import java.security.PrivateKey
 import java.security.PublicKey
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 
 class P2PMessenger private constructor(private val ctx: Context) {
 
@@ -34,6 +38,7 @@ class P2PMessenger private constructor(private val ctx: Context) {
         data class ChannelClosed(val contact: Contact) : PeerEvent()
         data class StatusResponse(val fromPublicKey: String, val hasPositive: Boolean, val queuedAt: Long = 0L) : PeerEvent()
         data class IncomingRequest(val contactPk: String) : PeerEvent()
+        data class BondRemoved(val contactPk: String) : PeerEvent()
     }
 
     private val _messageFlow    = MutableSharedFlow<Message>(extraBufferCapacity = 128)
@@ -58,6 +63,12 @@ class P2PMessenger private constructor(private val ctx: Context) {
     private val pendingOffers = ConcurrentHashMap<String, String>()
     // contacts waiting for user approval (IncomingRequest not yet approved)
     private val pendingApproval = ConcurrentHashMap.newKeySet<String>()
+    // handshakes requested before tracker was ready
+    private val pendingHandshakes = ConcurrentLinkedQueue<Contact>()
+    // active offer-retry job per contact (cancelled when a new offer starts or channel opens)
+    private val retryJobs = ConcurrentHashMap<String, Job>()
+    // last offerId already handled per peer — prevents re-processing retried offers
+    private val handledOffers = ConcurrentHashMap<String, String>()
 
     // -------------------------------------------------------------------------
     // Public API
@@ -100,9 +111,14 @@ class P2PMessenger private constructor(private val ctx: Context) {
 
     /** Called when user scans a QR code and wants to connect. */
     fun startHandshake(contact: Contact) {
+        if (!signaling.isReady) {
+            Log.d(TAG, "startHandshake: tracker not ready — queuing for ${contact.publicKey.take(8)}")
+            pendingHandshakes.add(contact)
+            return
+        }
         val room = sha256Hex(contact.publicKey)   // Bob's personal room
         Log.d(TAG, "startHandshake target=${contact.publicKey.take(8)} room=${room.take(16)}")
-        createOffer(contact.publicKey, room)
+        createOffer(contact.publicKey, room, force = true)
     }
 
     /** User tapped Accept on the IncomingRequest dialog. */
@@ -130,13 +146,23 @@ class P2PMessenger private constructor(private val ctx: Context) {
     fun rejectIncomingRequest(contactPk: String) {
         Log.d(TAG, "rejectIncomingRequest pk=${contactPk.take(8)}")
         pendingApproval.remove(contactPk)
+        // handledOffers is intentionally kept: retries of the same offerId stay blocked.
+        // A new dialog only appears when A generates a fresh offer (new offerId) by rescanning.
         transports.remove(contactPk)?.close()
     }
 
     fun closeContact(contactPk: String) {
         Log.d(TAG, "closeContact pk=${contactPk.take(8)}")
+        retryJobs.remove(contactPk)?.cancel()
+        // Notify the peer so they can remove us from their bonds too
+        val recipientPub = KeyManager.base64UrlToPublicKey(contactPk)
+        if (recipientPub != null && transports[contactPk]?.isOpen() == true) {
+            val payload = JSONObject().put("t", "bye").toString().toByteArray()
+            encryptTo(payload, recipientPub)?.let { transports[contactPk]?.sendMessage(it) }
+        }
         transports.remove(contactPk)?.close()
         signaling.removeRoom(deriveRoomId(myPkB64, contactPk))
+        PendingStatusStore.consumeUpdate(ctx, contactPk) // clean up queued status
     }
 
     fun sendMessage(contactPk: String, text: String) {
@@ -178,6 +204,18 @@ class P2PMessenger private constructor(private val ctx: Context) {
         transports[contact.publicKey]?.sendMessage(encrypted)
     }
 
+    /** Push my current test status to all contacts — open channels immediately, others queued. */
+    fun pushMyStatusToAll() {
+        val hasPositive = myHasPositive()
+        ContactStore.load(ctx).forEach { contact ->
+            if (transports[contact.publicKey]?.isOpen() == true) {
+                pushMyStatus(contact.publicKey, hasPositive)
+            } else {
+                PendingStatusStore.addUpdate(ctx, contact.publicKey, hasPositive)
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Private — signaling events
     // -------------------------------------------------------------------------
@@ -189,6 +227,13 @@ class P2PMessenger private constructor(private val ctx: Context) {
         signaling.announce(sha256Hex(myPkB64))
         // Rejoin permanent rooms for all known contacts
         ContactStore.load(ctx).forEach { reconnect(it) }
+        // Flush handshakes that were queued before tracker was ready
+        var contact = pendingHandshakes.poll()
+        while (contact != null) {
+            Log.d(TAG, "flushing queued handshake for ${contact.publicKey.take(8)}")
+            startHandshake(contact)
+            contact = pendingHandshakes.poll()
+        }
     }
 
     private fun handleIncomingOffer(event: TorrentSignaling.Event.Offer) {
@@ -209,6 +254,13 @@ class P2PMessenger private constructor(private val ctx: Context) {
         }
 
         val isKnown = ContactStore.load(ctx).any { it.publicKey == fromPk }
+
+        // Deduplication: same offerId from same peer = retry announce, ignore entirely
+        if (handledOffers[fromPk] == event.offerId) {
+            Log.d(TAG, "duplicate offer ${event.offerId.take(8)} from ${fromPk.take(8)} — skipping")
+            return
+        }
+        handledOffers[fromPk] = event.offerId
         Log.d(TAG, "← offer from=${fromPk.take(8)} room=${if (isHandshake) "handshake" else "permanent"} known=$isKnown")
 
         // Strip the identity attribute before passing to WebRTC
@@ -217,13 +269,14 @@ class P2PMessenger private constructor(private val ctx: Context) {
             .joinToString("\r\n")
 
         val room = if (isPermanent) permanentRoom else myPersonalRoom
+        transports.remove(fromPk)?.close()
         val transport = buildAnswerTransport(fromPk, room)
         transports[fromPk] = transport
         transport.handleOffer(cleanSdp, event.offerId, event.peerId)
 
         if (isHandshake && !isKnown) {
-            Log.d(TAG, "unknown peer — emitting IncomingRequest for ${fromPk.take(8)}")
             pendingApproval.add(fromPk)
+            Log.d(TAG, "unknown peer — emitting IncomingRequest for ${fromPk.take(8)}")
             scope.launch { _peerEventFlow.emit(PeerEvent.IncomingRequest(fromPk)) }
         }
     }
@@ -234,6 +287,8 @@ class P2PMessenger private constructor(private val ctx: Context) {
             return
         }
         Log.d(TAG, "← answer for ${contactPk.take(8)} offerId=${event.offerId.take(8)}")
+        // B received the offer and responded — stop re-announcing regardless of outcome
+        retryJobs.remove(contactPk)?.cancel()
         transports[contactPk]?.handleAnswer(event.sdp)
     }
 
@@ -242,18 +297,25 @@ class P2PMessenger private constructor(private val ctx: Context) {
     // -------------------------------------------------------------------------
 
     private fun reconnect(contact: Contact) {
-        val room = deriveRoomId(myPkB64, contact.publicKey)
         val iAmInitiator = myPkB64 < contact.publicKey
-        Log.d(TAG, "reconnect ${contact.publicKey.take(8)} room=${room.take(16)} initiator=$iAmInitiator")
+        Log.d(TAG, "reconnect ${contact.publicKey.take(8)} initiator=$iAmInitiator")
         if (iAmInitiator) {
-            createOffer(contact.publicKey, room)
+            // Always use the peer's personal room so the offer reaches them even if they deleted us.
+            // They still always listen there; a known contact simply skips the IncomingRequest dialog.
+            createOffer(contact.publicKey, sha256Hex(contact.publicKey))
         } else {
-            signaling.announce(room)
+            // Answerer side: listen on the permanent room for the initiator's offer
+            signaling.announce(deriveRoomId(myPkB64, contact.publicKey))
         }
     }
 
-    private fun createOffer(contactPk: String, room: String) {
+    private fun createOffer(contactPk: String, room: String, force: Boolean = false) {
+        if (!force && retryJobs[contactPk]?.isActive == true) {
+            Log.d(TAG, "createOffer: retry already active for ${contactPk.take(8)} — skipping")
+            return
+        }
         Log.d(TAG, "createOffer → ${contactPk.take(8)} room=${room.take(16)}")
+        transports.remove(contactPk)?.close()
         val transport = WebRtcTransport(
             scope          = scope,
             myPk           = myPkB64,
@@ -271,6 +333,20 @@ class P2PMessenger private constructor(private val ctx: Context) {
         )
         transports[contactPk] = transport
         transport.createOffer()
+        // Cancel any previous retry loop for this contact, then start a fresh one.
+        // Tracker only delivers offers to currently connected peers, so B may miss the first
+        // announce if it reconnects later — we re-announce until the channel opens.
+        retryJobs.remove(contactPk)?.cancel()
+        retryJobs[contactPk] = scope.launch {
+            repeat(OFFER_RETRY_COUNT) {
+                delay(OFFER_RETRY_INTERVAL_MS)
+                val t = transports[contactPk]
+                if (t == null || t.isOpen() || t.isClosed()) return@launch
+                Log.d(TAG, "re-announcing offer for ${contactPk.take(8)} (attempt ${it + 2})")
+                t.reannounce()
+            }
+            retryJobs.remove(contactPk)
+        }
     }
 
     private fun buildAnswerTransport(contactPk: String, room: String) = WebRtcTransport(
@@ -294,9 +370,13 @@ class P2PMessenger private constructor(private val ctx: Context) {
                     return@launch
                 }
                 Log.d(TAG, "ChannelOpened → ${contactPk.take(8)}")
+                retryJobs.remove(contactPk)?.cancel()
                 // Join permanent room now that we're connected
                 signaling.announce(deriveRoomId(myPkB64, contactPk))
                 _peerEventFlow.emit(PeerEvent.ChannelOpened(contact))
+                // Request their status and deliver any queued status update for them
+                sendStatusRequest(contact)
+                deliverPendingStatus(contactPk)
             } else {
                 Log.d(TAG, "ChannelClosed → ${contactPk.take(8)}")
                 _peerEventFlow.emit(PeerEvent.ChannelClosed(contact))
@@ -350,7 +430,33 @@ class P2PMessenger private constructor(private val ctx: Context) {
                     _peerEventFlow.emit(PeerEvent.StatusResponse(contactPk, hasPositive))
                 }
             }
+
+            "bye" -> {
+                Log.d(TAG, "← bye from ${contactPk.take(8)} — removing bond")
+                ContactStore.delete(ctx, contactPk)
+                transports.remove(contactPk)?.close()
+                signaling.removeRoom(deriveRoomId(myPkB64, contactPk))
+                PendingStatusStore.consumeUpdate(ctx, contactPk)
+                scope.launch { _peerEventFlow.emit(PeerEvent.BondRemoved(contactPk)) }
+            }
         }
+    }
+
+    private fun myHasPositive(): Boolean =
+        TestsStore.load(ctx).any { record -> record.tests.any { it.result == TestResult.POSITIVE } }
+
+    private fun pushMyStatus(contactPk: String, hasPositive: Boolean = myHasPositive()) {
+        val recipientPub = KeyManager.base64UrlToPublicKey(contactPk) ?: return
+        val payload  = JSONObject().put("t", "srsp").put("pos", hasPositive).toString().toByteArray()
+        val encrypted = encryptTo(payload, recipientPub) ?: return
+        if (transports[contactPk]?.sendMessage(encrypted) == true)
+            Log.d(TAG, "→ pushed status (pos=$hasPositive) to ${contactPk.take(8)}")
+    }
+
+    private fun deliverPendingStatus(contactPk: String) {
+        val pending = PendingStatusStore.consumeUpdate(ctx, contactPk) ?: return
+        Log.d(TAG, "delivering queued status (pos=${pending.hasPositive}) to ${contactPk.take(8)}")
+        pushMyStatus(contactPk, pending.hasPositive)
     }
 
     private fun encryptTo(payload: ByteArray, pub: PublicKey): ByteArray? =
@@ -365,6 +471,8 @@ class P2PMessenger private constructor(private val ctx: Context) {
 
     companion object {
         private const val TAG = "P2PMessenger"
+        private const val OFFER_RETRY_COUNT       = 6          // retries after the first attempt
+        private const val OFFER_RETRY_INTERVAL_MS = 5_000L    // 5 s between retries (30 s total)
 
         @Volatile private var instance: P2PMessenger? = null
         fun get(context: Context): P2PMessenger =

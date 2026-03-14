@@ -104,7 +104,11 @@ class MainActivity : AppCompatActivity() {
                     .setNegativeButton(getString(R.string.bond_request_decline)) { _, _ ->
                         P2PMessenger.get(this).rejectIncomingRequest(pk)
                     }
-                    .setCancelable(false)
+                    .setCancelable(true)
+                    .setOnCancelListener {
+                        // Reset state so A's next retry re-shows the dialog
+                        P2PMessenger.get(this).rejectIncomingRequest(pk)
+                    }
                     .show()
             }
 
@@ -112,6 +116,9 @@ class MainActivity : AppCompatActivity() {
                 // Handled in BondsFragment
             }
             is P2PMessenger.PeerEvent.StatusResponse -> {
+                // Handled in BondsFragment
+            }
+            is P2PMessenger.PeerEvent.BondRemoved -> {
                 // Handled in BondsFragment
             }
         }
