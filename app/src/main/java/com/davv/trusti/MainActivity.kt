@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
                     .setTitle(getString(R.string.bond_request_title))
                     .setMessage(getString(R.string.bond_request_message, pk.take(12)))
                     .setPositiveButton(getString(R.string.bond_request_accept)) { _, _ ->
-                        P2PMessenger.get(this).approveIncomingRequest(pk)
+                        P2PMessenger.get(this).approveIncomingRequest(pk, "Contact ${pk.take(6)}")
                     }
                     .setNegativeButton(getString(R.string.bond_request_decline)) { _, _ ->
                         P2PMessenger.get(this).rejectIncomingRequest(pk)

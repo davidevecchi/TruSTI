@@ -20,6 +20,10 @@
     <!-- Bonds screen -->
     <string name="contacts_empty_title">No bonds yet</string>
     <string name="contacts_empty_sub">Scan a peer\'s QR code to bond with them</string>
+    <string name="contacts_delete_title">Delete contact</string>
+    <string name="contacts_delete_message">Remove \"%s\" from your contacts?</string>
+    <string name="contacts_delete_confirm">Delete</string>
+    <string name="contacts_long_press_hint">Long press to delete</string>
 
     <!-- Settings screen -->
     <string name="settings_title">Settings</string>

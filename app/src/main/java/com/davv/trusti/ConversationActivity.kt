@@ -64,7 +64,7 @@ class ConversationActivity : AppCompatActivity() {
             if (text.isEmpty()) return@setOnClickListener
             binding.etMessage.setText("")
             lifecycleScope.launch {
-                P2PMessenger.get(this@ConversationActivity).sendMessage(contact, text)
+                P2PMessenger.get(this@ConversationActivity).sendMessage(contact.publicKey, text)
             }
         }
 

@@ -4,6 +4,8 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -70,15 +72,15 @@ class BondsFragment : Fragment() {
                     val bond = bondToDelete!!
                     AlertDialog(
                         onDismissRequest = { bondToDelete = null },
-                        title = { Text(stringResource(R.string.tests_delete_title)) },
-                        text = { Text(stringResource(R.string.tests_delete_message, bond.name)) },
+                        title = { Text(stringResource(R.string.contacts_delete_title)) },
+                        text = { Text(stringResource(R.string.contacts_delete_message, bond.name)) },
                         confirmButton = {
                             TextButton(onClick = {
                                 P2PMessenger.get(requireContext()).closeContact(bond.publicKey)
                                 ContactStore.delete(requireContext(), bond.publicKey)
                                 bonds = ContactStore.load(requireContext())
                                 bondToDelete = null
-                            }) { Text(stringResource(R.string.tests_delete_confirm)) }
+                            }) { Text(stringResource(R.string.contacts_delete_confirm)) }
                         },
                         dismissButton = {
                             TextButton(onClick = { bondToDelete = null }) {
@@ -98,7 +100,7 @@ class BondsFragment : Fragment() {
                         item {
                             StandardEmptyState(
                                 title = stringResource(R.string.contacts_empty_title),
-                                subtitle = stringResource(R.string.contacts_empty_sub),
+                                subtitle = stringResource(R.string.contacts_empty_sub) + "\n\n" + stringResource(R.string.contacts_long_press_hint),
                                 icon = {
                                     Text(
                                         text = "🤝",
@@ -232,6 +234,7 @@ class BondsFragment : Fragment() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BondCard(
     bond: Contact,
@@ -241,7 +244,10 @@ private fun BondCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() },
+            .combinedClickable(
+                onClick = { onClick() },
+                onLongClick = { onLongClick() }
+            ),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(

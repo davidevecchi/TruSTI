@@ -2,9 +2,6 @@ package com.davv.trusti.smp
 
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
@@ -15,275 +12,194 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.UUID
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManagerFactory
-import java.security.KeyStore
+import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Signaling client using public WebTorrent trackers.
- * Protocol: https://github.com/webtorrent/bittorrent-tracker
- */
-class TorrentSignaling(
-    private val trackerUrl: String = "wss://tracker.openwebtorrent.com",
-    private val scope: CoroutineScope
-) {
-    private val client = run {
-        val trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        trustManagerFactory.init(null as KeyStore?)
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, trustManagerFactory.trustManagers, null)
-        
-        OkHttpClient.Builder()
-            .pingInterval(30, TimeUnit.SECONDS)
-            .sslSocketFactory(sslContext.socketFactory, trustManagerFactory.trustManagers[0] as javax.net.ssl.X509TrustManager)
-            .build()
-    }
+class TorrentSignaling(private val scope: CoroutineScope) {
 
-    private var ws: WebSocket? = null
-    private var peerId = generatePeerId()
-    // Incremented on every connect(). Callbacks from a socket whose generation != current
-    // are stale (old socket fired after new one opened) and must be ignored.
-    @Volatile private var generation = 0
-
-    private val _events = MutableSharedFlow<SignalingEvent>(extraBufferCapacity = 64)
-    val events: SharedFlow<SignalingEvent> = _events
-
-    private val rooms = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-    private var reconnectJob: Job? = null
-    private var reannounceJob: Job? = null
-
-    @Volatile var isReady = false
-        private set
-
-    // Prevents onFailure + onClosing both firing disconnect callbacks for the same socket.
-    @Volatile private var connected = false
-
-    var onConnected: (() -> Unit)? = null
-    var onDisconnected: (() -> Unit)? = null
-    var onTrackerError: ((String) -> Unit)? = null
-
-    /**
-     * Convert a hex room-ID (SHA-256, 64 hex chars) to the 20-byte binary
-     * string the WebTorrent tracker expects as `info_hash`.
-     */
-    private fun hexToInfoHash(hexRoomId: String): String {
-        require(hexRoomId.length >= 40) { "Room ID too short: $hexRoomId" }
-        require(hexRoomId.matches(Regex("^[a-fA-F0-9]+$"))) { "Invalid hex characters in room ID" }
-        val hex = hexRoomId.take(40)
-        try {
-            val bytes = ByteArray(20) { i ->
-                hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
-            }
-            return String(bytes, Charsets.ISO_8859_1)
-        } catch (e: Exception) {
-            throw IllegalArgumentException("Invalid hex room ID: $hexRoomId", e)
-        }
-    }
-
-    sealed class SignalingEvent {
-        data class PeerDiscovered(val peerId: String) : SignalingEvent()
+    sealed class Event {
         data class Offer(
             val peerId: String,
             val offerId: String,
             val sdp: String,
             val fromPk: String?,
-            val sig: String?    // Base64URL ECDSA-SHA256 signature of (offerId + sdp) by fromPk's key
-        ) : SignalingEvent()
-        data class Answer(val peerId: String, val offerId: String, val sdp: String) : SignalingEvent()
+            val sig: String?,
+            val roomId: String      // which room this offer arrived on
+        ) : Event()
+        data class Answer(val peerId: String, val offerId: String, val sdp: String) : Event()
     }
 
+    private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 64)
+    val events: SharedFlow<Event> = _events
+
+    @Volatile var isReady = false; private set
+
+    var onConnected: (() -> Unit)? = null
+    var onDisconnected: (() -> Unit)? = null
+    var onTrackerError: ((String) -> Unit)? = null
+
+    private val client = OkHttpClient()
+    private var ws: WebSocket? = null
+
+    // 20-byte random peer identity for this session
+    private val peerId: String = ByteArray(20)
+        .also { SecureRandom().nextBytes(it) }
+        .toString(Charsets.ISO_8859_1)
+
+    // bi-directional mapping: infoHash ↔ roomId
+    private val ihToRoom  = ConcurrentHashMap<String, String>()
+    private val roomToIh  = ConcurrentHashMap<String, String>()
+
     fun connect() {
-        val gen = ++generation
-        peerId = generatePeerId()
-        ws?.cancel()
-        val request = Request.Builder().url(trackerUrl).build()
-        ws = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                if (gen != generation) return
-                Log.d(TAG, "Connected to tracker")
+        Log.d(TAG, "connect → $TRACKER_URL")
+        val req = Request.Builder().url(TRACKER_URL).build()
+        ws = client.newWebSocket(req, object : WebSocketListener() {
+            override fun onOpen(ws: WebSocket, r: Response) {
+                Log.d(TAG, "tracker connected")
                 isReady = true
-                connected = true
                 onConnected?.invoke()
-                synchronized(rooms) { rooms.toList() }.forEach { sendAnnounce(it) }
-                startPeriodicReannounce()
             }
-
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                if (gen != generation) return
-                if (text.length > 10_000) { // Prevent oversized messages
-                    Log.w(TAG, "Ignoring oversized message: ${text.length} chars")
-                    return
-                }
-                val json = runCatching { JSONObject(text) }.getOrNull() ?: return
-
-                json.optString("failure reason").takeIf { it.isNotEmpty() }?.let { reason ->
-                    Log.e(TAG, "Tracker error: $reason")
-                    onTrackerError?.invoke(reason)
-                    return
-                }
-
-                json.optJSONArray("peers")?.let { peers ->
-                    for (i in 0 until peers.length()) {
-                        val p = peers.optJSONObject(i) ?: continue
-                        val pid = p.optString("peer_id")
-                        if (pid.isNotEmpty() && pid != peerId && isValidPeerId(pid)) {
-                            scope.launch { _events.emit(SignalingEvent.PeerDiscovered(pid)) }
-                        }
-                    }
-                }
-
-                val fromPeerId = json.optString("peer_id")
-                if (fromPeerId == peerId || fromPeerId.isEmpty() || !isValidPeerId(fromPeerId)) return
-
-                val offer = json.optJSONObject("offer")
-                val answer = json.optJSONObject("answer")
-
-                when {
-                    offer != null -> runCatching {
-                        val sdp = offer.getString("sdp")
-                        val pk = offer.optString("from_pk").takeIf { it.isNotEmpty() }
-                        val sig = offer.optString("sig").takeIf { it.isNotEmpty() }
-                        scope.launch {
-                            _events.emit(SignalingEvent.Offer(
-                                peerId = fromPeerId,
-                                offerId = json.optString("offer_id"),
-                                sdp = sdp,
-                                fromPk = pk,
-                                sig = sig
-                            ))
-                        }
-                    }.onFailure { e -> Log.e(TAG, "Error parsing offer", e) }
-
-                    answer != null -> runCatching {
-                        scope.launch {
-                            _events.emit(SignalingEvent.Answer(
-                                fromPeerId,
-                                json.optString("offer_id"),
-                                answer.getString("sdp")
-                            ))
-                        }
-                    }.onFailure { e -> Log.e(TAG, "Error parsing answer", e) }
-                }
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (gen != generation) return
-                Log.e(TAG, "Tracker failure: ${t.message}")
+            override fun onMessage(ws: WebSocket, text: String) = handleMessage(text)
+            override fun onFailure(ws: WebSocket, t: Throwable, r: Response?) {
+                Log.e(TAG, "tracker failure: ${t.message}")
                 isReady = false
-                stopPeriodicReannounce()
-                handleDisconnect()
+                onTrackerError?.invoke(t.message ?: "tracker error")
+                onDisconnected?.invoke()
             }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                if (gen != generation) return
-                Log.d(TAG, "Tracker closing: $reason")
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "tracker closed code=$code reason=$reason")
                 isReady = false
-                stopPeriodicReannounce()
-                webSocket.close(1000, null)
-                handleDisconnect()
+                onDisconnected?.invoke()
             }
         })
     }
 
-    /** Called by both onFailure and onClosing — guarded so it fires at most once per connection. */
-    private fun handleDisconnect() {
-        if (!connected) return
-        connected = false
-        onDisconnected?.invoke()
-        scheduleReconnect()
-    }
-
-    private fun scheduleReconnect() {
-        reconnectJob?.cancel()
-        reconnectJob = scope.launch(Dispatchers.IO) {
-            delay(5_000)
-            connect()
-        }
-    }
-
-    fun removeRoom(roomId: String) {
-        rooms.remove(roomId)
-    }
-
+    /** Listen on a room without sending an offer (answerer side / personal room). */
     fun announce(roomId: String) {
-        rooms.add(roomId)
-        if (isReady) sendAnnounce(roomId)
+        Log.d(TAG, "announce room=${roomId.take(16)}")
+        send(JSONObject().apply {
+            put("action",    "announce")
+            put("info_hash", infoHashFor(roomId))
+            put("peer_id",   peerId)
+            put("numwant",   0)
+        })
     }
 
-    private fun sendAnnounce(roomId: String) {
-        val msg = JSONObject()
-            .put("action", "announce")
-            .put("info_hash", hexToInfoHash(roomId))
-            .put("peer_id", peerId)
-            .put("downloaded", 0).put("left", 0).put("uploaded", 0)
-            .put("numwant", 10)
-        ws?.send(msg.toString())
+    /** Stop tracking a room (cleanup after disconnect). */
+    fun removeRoom(roomId: String) {
+        roomToIh.remove(roomId)?.let { ih -> ihToRoom.remove(ih) }
     }
 
-    fun announceWithOffer(roomId: String, offerId: String, sdp: String, myPk: String? = null, sig: String? = null) {
-        // Do NOT add handshake rooms to the permanent rooms set — they are one-time use.
-        // Re-announcing them after reconnect sends empty offers and creates signaling noise.
-        val offerObj = JSONObject().put("type", "offer").put("sdp", sdp)
-        myPk?.let { offerObj.put("from_pk", it) }
-        sig?.let { offerObj.put("sig", it) }
-        val msg = JSONObject()
-            .put("action", "announce")
-            .put("info_hash", hexToInfoHash(roomId))
-            .put("peer_id", peerId)
-            .put("numwant", 1)
-            .put("offers", JSONArray().put(
-                JSONObject().put("offer_id", offerId).put("offer", offerObj)
+    /** Send an offer into a room (initiator side). */
+    fun announceWithOffer(
+        roomId: String, offerId: String, sdp: String,
+        myPk: String? = null, sig: String? = null
+    ) {
+        Log.d(TAG, "announceWithOffer room=${roomId.take(16)} offerId=${offerId.take(8)}")
+        val offer = JSONObject().apply {
+            put("type", "offer")
+            put("sdp",  sdp)
+            myPk?.let { put("from_pk", it) }
+            sig?.let  { put("sig",     it) }
+        }
+        send(JSONObject().apply {
+            put("action",    "announce")
+            put("info_hash", infoHashFor(roomId))
+            put("peer_id",   peerId)
+            put("numwant",   10)
+            put("offers", JSONArray().put(
+                JSONObject().apply {
+                    put("offer_id", offerId)
+                    put("offer",    offer)
+                }
             ))
-        ws?.send(msg.toString())
+        })
     }
 
+    /** Send an answer back to an offeror. */
     fun sendAnswer(roomId: String, toPeerId: String, offerId: String, sdp: String) {
-        val msg = JSONObject()
-            .put("action", "announce")
-            .put("info_hash", hexToInfoHash(roomId))
-            .put("peer_id", peerId)
-            .put("to_peer_id", toPeerId)
-            .put("offer_id", offerId)
-            .put("answer", JSONObject().put("type", "answer").put("sdp", sdp))
-        ws?.send(msg.toString())
+        Log.d(TAG, "sendAnswer room=${roomId.take(16)} offerId=${offerId.take(8)}")
+        send(JSONObject().apply {
+            put("action",      "announce")
+            put("info_hash",   infoHashFor(roomId))
+            put("peer_id",     peerId)
+            put("to_peer_id",  toPeerId)
+            put("offer_id",    offerId)
+            put("answer", JSONObject().apply {
+                put("type", "answer")
+                put("sdp",  sdp)
+            })
+        })
     }
 
-    private fun startPeriodicReannounce() {
-        reannounceJob?.cancel()
-        reannounceJob = scope.launch(Dispatchers.IO) {
-            while (true) {
-                delay(120_000)
-                synchronized(rooms) { rooms.toList() }.forEach { sendAnnounce(it) }
+    fun disconnect() {
+        isReady = false
+        ws?.close(1000, "bye")
+        ws = null
+    }
+
+    // --- private ---
+
+    private fun infoHashFor(roomId: String): String =
+        roomToIh.getOrPut(roomId) {
+            // take first 20 bytes of the sha256 hex room ID
+            val bytes = ByteArray(20) { i -> roomId.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+            val ih = bytes.toString(Charsets.ISO_8859_1)
+            ihToRoom[ih] = roomId
+            ih
+        }
+
+    private fun send(json: JSONObject) {
+        val sent = ws?.send(json.toString()) ?: false
+        if (!sent) Log.w(TAG, "send failed — ws closed?")
+    }
+
+    private fun handleMessage(text: String) {
+        val obj = runCatching { JSONObject(text) }.getOrNull() ?: run {
+            Log.w(TAG, "unparseable message: ${text.take(120)}")
+            return
+        }
+        val action = obj.optString("action")
+        if (action != "announce") {
+            Log.d(TAG, "tracker msg action=$action (ignored)")
+            return
+        }
+
+        val ih     = obj.optString("info_hash")
+        val roomId = ihToRoom[ih] ?: ih   // fall back to ih if not registered
+
+        val offerObj = obj.optJSONObject("offer")
+        if (offerObj != null) {
+            val fromPk = offerObj.optString("from_pk").takeIf { it.isNotEmpty() }
+            Log.d(TAG, "← offer  room=${roomId.take(16)} offerId=${obj.optString("offer_id").take(8)} fromPk=${fromPk?.take(8)}")
+            scope.launch {
+                _events.emit(Event.Offer(
+                    peerId  = obj.optString("peer_id"),
+                    offerId = obj.optString("offer_id"),
+                    sdp     = offerObj.optString("sdp"),
+                    fromPk  = offerObj.optString("from_pk").takeIf { it.isNotEmpty() },
+                    sig     = offerObj.optString("sig").takeIf     { it.isNotEmpty() },
+                    roomId  = roomId
+                ))
+            }
+            return
+        }
+
+        val answerObj = obj.optJSONObject("answer")
+        if (answerObj != null) {
+            Log.d(TAG, "← answer room=${roomId.take(16)} offerId=${obj.optString("offer_id").take(8)}")
+            scope.launch {
+                _events.emit(Event.Answer(
+                    peerId  = obj.optString("peer_id"),
+                    offerId = obj.optString("offer_id"),
+                    sdp     = answerObj.optString("sdp")
+                ))
             }
         }
     }
 
-    private fun stopPeriodicReannounce() {
-        reannounceJob?.cancel()
-        reannounceJob = null
-    }
-
-    fun disconnect() {
-        reconnectJob?.cancel()
-        stopPeriodicReannounce()
-        connected = false
-        isReady = false
-        ws?.cancel()
-        ws = null
-    }
-
     companion object {
         private const val TAG = "TorrentSignaling"
-        
-        private fun isValidPeerId(peerId: String): Boolean {
-            return peerId.length == 20 && peerId.all { it.isLetterOrDigit() || it == '-' }
-        }
-        
-        private fun generatePeerId(): String {
-            val random = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
-            return "-TR0001-$random"
-        }
+        private const val TRACKER_URL = "wss://tracker.openwebtorrent.com"
     }
 }
