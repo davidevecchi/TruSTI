@@ -104,23 +104,70 @@ sequenceDiagram
     end
 
     rect rgba(255, 170, 0, 0.4)
-    Note over A: Scan B's QR
+    Note over A: User: Scan B's QR
     A->>A: Extract B_pub
-    A->>A: Compute room = sha256(sorted(A_pub + B_pub))
-    Note over A: Derive shared room<br/>Store B as contact
+    A->>A: startHandshake(contact)<br/>Store in pendingContactByPk
     end
 
-    rect rgba(0, 255, 0, 0.4)
-    Note over A: 💾 PERSISTENT<br/>ContactStore.trusti_contacts<br/>(B saved with pub key)
+    rect rgba(255, 170, 0, 0.4)
+    Note over A: ⚡ SESSION CACHE<br/>pendingContactByPk[B_pk] = contact
+    Note over A: ⚡ SESSION CACHE<br/>newlyBondedContacts.add(B_pk)
     end
 
-    Note over B: Listening for peer...
-    Note over A: Later: scan triggers handshake
+    A->>Tracker: announce + offer<br/>to sha256(B_pub)
+    Tracker->>B: deliver offer
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over B: ⚡ SESSION CACHE<br/>Create WebRtcTransport<br/>handledOffers[B_pk] = offerId
+    end
+
+    Note over B: Emit IncomingRequest event
+    Note over B: User sees dialog:<br/>[Accept] [Decline]
+
+    alt User taps Accept
+        rect rgba(0, 255, 0, 0.4)
+        Note over B: 💾 PERSISTENT<br/>ContactStore.save(ctx, contact)<br/>Contact saved immediately
+        end
+
+        B->>Tracker: sendAnswer<br/>via permanent room
+
+        rect rgba(255, 170, 0, 0.4)
+        Note over B: ⚡ SESSION CACHE<br/>pendingAccepts.add(B_pk)<br/>or send "acc" if DC open
+        end
+
+        B->>A: Send "acc" (approve message)
+
+        rect rgba(0, 255, 0, 0.4)
+        Note over A: 💾 PERSISTENT<br/>On "acc" received:<br/>ContactStore.save(ctx, contact)
+        end
+
+    else User taps Decline
+        rect rgba(255, 0, 0, 0.4)
+        Note over B: Reject handshake
+        Note over B: Send "rej" message
+        Note over B: Close transport
+        end
+
+        B->>A: Send "rej" (decline message)
+        Note over A: Stop retrying offer
+    end
 ```
 
 With B's public key (B_pub), A can:
 - Derive permanent signaling room: `sha256(sorted(A_pub || B_pub))`
 - Encrypt messages so only B can decrypt
+
+**Contact Saving Lifecycle:**
+
+| Event | Side | Action | Storage |
+| --- | --- | --- | --- |
+| User scans QR | A | Store contact in `pendingContactByPk`, send offer | ⚡ SESSION |
+| Offer received | B | Show accept/decline dialog | ⚡ SESSION (transports, handledOffers) |
+| User accepts | B | Save contact immediately, send "acc" | 💾 PERSISTENT (ContactStore) |
+| "acc" received | A | Save contact from `pendingContactByPk` | 💾 PERSISTENT (ContactStore) |
+| User declines | B | Send "rej", close transport | ❌ Contact never saved |
+| "rej" received | A | Stop retries, remove from pending | ❌ Contact never saved |
+| DataChannel opens | A/B | Mark `isConnected=true` (memory only) | ⚡ SESSION (resets on app restart) |
 
 ### 2. Signaling via WebTorrent Tracker
 
@@ -137,6 +184,10 @@ Peers discover and exchange signaling through a public WebTorrent tracker (`wss:
 
 #### First-Time Connection Flow (A scans B's QR)
 
+**Two-phase bonding:**
+- Phase 1: A sends offer, B shows dialog
+- Phase 2: B user accepts → B saves contact → B sends "acc" → A saves contact
+
 ```mermaid
 sequenceDiagram
     participant A as A<br/>(Offerer)
@@ -144,6 +195,7 @@ sequenceDiagram
     participant Tracker as WebTorrent Tracker
     participant ICE_B as STUN/TURN<br/>stun.l.google.com
     participant B as B<br/>(Answerer)
+    participant User as B's User
 
     B->>Tracker: announce ✓ in sha256(B_pub)
     Note over A: Scans QR → gets B_pub
@@ -155,18 +207,36 @@ sequenceDiagram
     end
 
     rect rgba(255, 170, 0, 0.4)
-    Note over A: ⚡ SESSION CACHE<br/>offerId stored in pendingOffers
+    Note over A: ⚡ SESSION CACHE<br/>pendingContactByPk[B_pk]<br/>newlyBondedContacts.add(B_pk)
     end
 
     A->>Tracker: announce + offer<br/>SDP with all ICE candidates<br/>to sha256(B_pub)
     Tracker->>B: deliver offer
 
     rect rgba(255, 170, 0, 0.4)
-    Note over B: ⚡ SESSION CACHE<br/>Offer cached in handledOffers<br/>(dedup check)
+    Note over B: ⚡ SESSION CACHE<br/>Create transport<br/>handledOffers[A_pk] = offerId
     end
 
-    B->>Tracker: sendAnswer<br/>SDP with all ICE candidates
-    Tracker->>A: deliver answer
+    Note over B: Emit IncomingRequest event
+    User->>B: [Accept] or [Decline]
+
+    alt User taps Accept
+        rect rgba(0, 255, 0, 0.4)
+        Note over B: 💾 PERSISTENT<br/>ContactStore.save(contact)
+        end
+
+        B->>Tracker: sendAnswer<br/>SDP with all ICE candidates
+        Tracker->>A: deliver answer
+
+        B->>A: Send "acc" message<br/>(approval)
+
+        B->>Tracker: announce in perm_room
+
+    else User taps Decline
+        B->>A: Send "rej" message
+        B->>Tracker: (leave personal room)
+        Note over A: Offer rejected<br/>Stop retries
+    end
 
     rect rgba(0, 255, 0, 0.4)
     Note over A,B: WebRTC Connectivity
@@ -176,11 +246,14 @@ sequenceDiagram
     end
 
     rect rgba(255, 170, 0, 0.4)
-    Note over A,B: ⚡ SESSION CACHE<br/>transports map + isConnected=true
+    Note over A,B: ⚡ SESSION CACHE<br/>transports[peer_pk] = transport<br/>isConnected=true
     end
 
     A->>Tracker: announce in perm_room
-    B->>Tracker: announce in perm_room
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over A: On "acc" received:<br/>💾 PERSISTENT<br/>ContactStore.save(contact)<br/>from pendingContactByPk
+    end
 
     Note over A,B: Bonded ✓<br/>Can now send encrypted messages
 ```
