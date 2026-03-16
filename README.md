@@ -143,15 +143,15 @@ With B's public key (B_pub), A can:
 
 **Contact Saving Lifecycle:**
 
-| Event | Side | Action | Storage |
-| --- | --- | --- | --- |
-| User scans QR | A | Store contact in `pendingContactByPk`, send offer | ⚡ SESSION |
-| Offer received | B | Show accept/decline dialog | ⚡ SESSION (transports, handledOffers) |
-| User accepts | B | Save contact immediately, send "acc" | 💾 PERSISTENT (ContactStore) |
-| "acc" received | A | Save contact from `pendingContactByPk` | 💾 PERSISTENT (ContactStore) |
-| User declines | B | Send "rej", close transport | ❌ Contact never saved |
-| "rej" received | A | Stop retries, remove from pending | ❌ Contact never saved |
-| DataChannel opens | A/B | Mark `isConnected=true` (memory only) | ⚡ SESSION (resets on app restart) |
+| Event          | Side | Action                                              | Storage          |
+| -------------- | ---- | --------------------------------------------------- | ---------------- |
+| User scans QR  | A    | Store contact in `pendingContactByPk`, send offer   | ⚡ SESSION        |
+| Offer received | B    | Show accept/decline dialog                          | ⚡ SESSION        |
+| User accepts   | B    | Save contact immediately, send "acc"               | 💾 PERSISTENT     |
+| "acc" received | A    | Save contact from `pendingContactByPk`              | 💾 PERSISTENT     |
+| User declines  | B    | Send "rej", close transport                         | ❌ Not saved     |
+| "rej" received | A    | Stop retries, remove from pending                   | ❌ Not saved     |
+| DataChannel op | A/B  | Mark `isConnected=true` (memory only)               | ⚡ SESSION        |
 
 ### 2. Signaling via WebTorrent Tracker
 
@@ -159,10 +159,10 @@ Peers discover and exchange signaling through a public WebTorrent tracker (`wss:
 
 **Room Types (all SHA-256 hashed):**
 
-| Room Type | Key | Purpose |
-| --- | --- | --- |
-| **Personal** | `sha256(my_public_key)` | I listen here; new peers reach me after scanning my QR |
-| **Permanent** | `sha256(sorted(A_pub \|\| B_pub))` | Both peers announce here; enables reconnection without scanning |
+| Room Type     | Key                              | Purpose                                                |
+| ------------- | -------------------------------- | ------------------------------------------------------ |
+| **Personal**  | `sha256(my_public_key)`          | I listen here; new peers reach me after scanning my QR |
+| **Permanent** | `sha256(sorted(A_pub \|\| B_pub))` | Both peers announce here; enables reconnection         |
 
 **Room Hashing:** Keys are concatenated lexicographically then hashed. Example: if A_pub < B_pub (byte comparison), then room = sha256(A_pub || B_pub). Both peers compute the same room ID independently.
 
@@ -415,11 +415,11 @@ All messages are JSON (then encrypted). Sent over the DataChannel after bonding 
 
 #### User-Facing Messages
 
-| Type | Payload | Purpose | Direction |
-| --- | --- | --- | --- |
-| `text` | `{from, content, ts}` | Chat message | Bidirectional |
-| `sreq` | `{"t": "sreq"}` | **Status Request:** "What's your latest test result?" | A → B |
-| `srsp` | `{"t": "srsp", "pos": boolean}` | **Status Response:** "I have/don't have a positive test" | B → A |
+| Type   | Payload                         | Purpose                     | Direction      |
+| ------ | ------------------------------- | --------------------------- | -------------- |
+| `text` | `{from, content, ts}`           | Chat message                | Bidirectional  |
+| `sreq` | `{"t": "sreq"}`                 | **Status Request**          | A → B          |
+| `srsp` | `{"t": "srsp", "pos": boolean}` | **Status Response**         | B → A          |
 
 **Example flow:**
 1. A opens contact → sends `sreq`
@@ -430,11 +430,11 @@ All messages are JSON (then encrypted). Sent over the DataChannel after bonding 
 
 #### Internal Protocol Messages (Bonding & Lifecycle)
 
-| Type | Payload | Purpose | When |
-| --- | --- | --- | --- |
-| `acc` | `{"t": "acc"}` | **Accept:** B approves the bond, contact is now saved | B sends when user taps "Accept" |
-| `rej` | `{"t": "rej"}` | **Reject:** B declines the bond request, A should stop retrying | B sends when user taps "Decline" |
-| `bye` | `{"t": "bye"}` | **Goodbye:** Peer is removing the bond, please delete me too | Either side sends when removing contact |
+| Type  | Payload         | Purpose           | When                                    |
+| ----- | --------------- | ----------------- | --------------------------------------- |
+| `acc` | `{"t": "acc"}`  | **Accept**        | B sends when user taps "Accept"         |
+| `rej` | `{"t": "rej"}`  | **Reject**        | B sends when user taps "Decline"        |
+| `bye` | `{"t": "bye"}`  | **Goodbye**       | Either side sends when removing contact |
 
 **Bond lifecycle:**
 1. A scans QR → creates offer (no message yet—offer via tracker)
@@ -453,29 +453,29 @@ All messages are JSON (then encrypted). Sent over the DataChannel after bonding 
 
 All persistent state lives in Android `SharedPreferences` as JSON strings — no database, no files.
 
-| Store                | Prefs key               | Contents                                                          | Notes                                                                           |
-| -------              | -----------             | ----------                                                        | -------                                                                         |
-| `KeyManager`         | `trusti_keys`           | EC P-256 key pair (DER-encoded)                                   | Generated once on first launch; never leaves the device                         |
-| `ContactStore`       | `trusti_contacts`       | List of up to 50 contacts (name, public key, last disease status) | `isConnected` is always written as `false` — it is a runtime-only flag          |
-| `TestsStore`         | `trusti_tests`          | Medical records (disease, date, POSITIVE / NEGATIVE)              | Read on every incoming `sreq` to compute the current positive flag              |
-| `PendingStatusStore` | `trusti_pending_status` | One queued status update per offline contact                      | Entries expire after 7 days; consumed atomically when the contact next connects |
-| `ProfileManager`     | `trusti_profile`        | Display name + disambiguation suffix                              | Set once during onboarding                                                      |
+| Store                | Prefs key               | Contents                                     | Notes                       |
+| -------------------- | ----------------------- | -------------------------------------------- | --------------------------- |
+| `KeyManager`         | `trusti_keys`           | EC P-256 key pair                            | Generated once on launch    |
+| `ContactStore`       | `trusti_contacts`       | List of up to 50 contacts                    | `isConnected` is runtime    |
+| `TestsStore`         | `trusti_tests`          | Medical records                              | Read on every `sreq`        |
+| `PendingStatusStore` | `trusti_pending_status` | One queued update per peer                   | Entries expire after 7 days |
+| `ProfileManager`     | `trusti_profile`        | Display name + disambiguation                | Set once during onboarding  |
 
 ### In-session state (cleared on process death)
 
 `P2PMessenger` is a process-lifetime singleton. The following maps live purely in memory and are rebuilt from scratch on every app launch:
 
-| Field                      | Type                                     | Purpose                                                                                              |
-| -------                    | ------                                   | ---------                                                                                            |
-| `transports`               | `ConcurrentHashMap<pk, WebRtcTransport>` | One active DataChannel per connected peer                                                            |
-| `pendingOffers`            | `ConcurrentHashMap<offerId, pk>`         | Tracks offers A sent so incoming answers can be matched                                              |
-| `pendingApproval`          | `Set<pk>`                                | Peers whose incoming-request dialog has not been answered yet                                        |
-| `pendingHandshakes`        | `Queue<Contact>`                         | Handshakes queued before the tracker WebSocket connected                                             |
-| `retryJobs`                | `ConcurrentHashMap<pk, Job>`             | Active offer-retry coroutines (re-announce every 5 s, up to 6 times)                                 |
-| `newlyBondedContacts`      | `Set<pk>`                                | Peers that bonded in this session — drives the "new bond" confirmation dialog                        |
-| `handledOffers`            | `ConcurrentHashMap<pk, offerId>`         | Dedup cache: the last offer ID processed per peer; capped at 100 entries to prevent unbounded growth |
-| `pendingAccepts`           | `Set<pk>`                                | B-side: approved contacts waiting for the DataChannel to open before sending `acc`                   |
-| `isConnected` on `Contact` | `Boolean`                                | Set to `true` in memory when a transport opens; always `false` when loaded from disk                 |
+| Field                 | Type                                     | Purpose                                     |
+| --------------------- | ---------------------------------------- | ------------------------------------------- |
+| `transports`          | `ConcurrentHashMap<pk, WebRtcTransport>` | Active DataChannels                         |
+| `pendingOffers`       | `ConcurrentHashMap<offerId, pk>`         | Track sent offers                           |
+| `pendingApproval`     | `Set<pk>`                                | Unanswered bond requests                    |
+| `pendingHandshakes`   | `Queue<Contact>`                         | Handshakes queued for tracker               |
+| `retryJobs`           | `ConcurrentHashMap<pk, Job>`             | Active retry coroutines                     |
+| `newlyBondedContacts` | `Set<pk>`                                | Peers bonded this session                   |
+| `handledOffers`       | `ConcurrentHashMap<pk, offerId>`         | Dedup cache (max 100 entries)               |
+| `pendingAccepts`      | `Set<pk>`                                | Approved contacts waiting for DC            |
+| `isConnected`         | `Boolean`                                | Runtime flag on `Contact`                   |
 
 ### Startup Sequence
 
@@ -587,13 +587,13 @@ sequenceDiagram
     B->>B: Read plaintext<br/>⚡ (SESSION only)
 ```
 
-| Property | How achieved |
-| --- | --- |
-| **No server stores messages** | End-to-end encrypted; only encrypted bytes route through tracker |
-| **No server knows identity** | Keys generated locally; tracker sees only room hashes |
-| **Forward secrecy** | Ephemeral key per message—past intercepts unreadable even if long-term key stolen |
-| **Authenticated encryption** | AES-GCM tag; tampering detected immediately (fail-safe) |
-| **Contact privacy** | Different room per pair; tracker can't link contacts together |
+| Property                     | How achieved                                                 |
+| ---------------------------- | ------------------------------------------------------------ |
+| **No server stores messages** | E2E encrypted; only encrypted bytes route through tracker    |
+| **No server knows identity**  | Keys generated locally; tracker sees only room hashes        |
+| **Forward secrecy**          | Ephemeral key per message                                    |
+| **Authenticated encryption**  | AES-GCM tag; tampering detected immediately                  |
+| **Contact privacy**          | Different room per pair; tracker can't link contacts         |
 
 ---
 
@@ -601,39 +601,27 @@ sequenceDiagram
 
 **Tracker Disconnect (Mid-Session)**
 
-| Scenario | Behavior | Recovery |
-| --- | --- | --- |
-| **Tracker unreachable on startup** | Emit `TrackerError` event, do not block app initialization | Retry with exponential backoff (1s, 2s, 4s, 8s, max 60s); failover to secondary tracker if configured |
-| **Tracker drops mid-session** | All pending offers marked stale; WebSocket reconnect triggered | Reannounce in rooms on reconnect; resend pending offers with new IDs; clear `pendingOffers` map on 60s timeout |
-| **Tracker timeout (>30s without pong)** | Close WebSocket, treat as disconnect | Immediate failover to secondary tracker; do not wait for exponential backoff |
+| Scenario                     | Behavior                                      | Recovery                               |
+| ---------------------------- | --------------------------------------------- | -------------------------------------- |
+| **Tracker unreachable**      | Emit `TrackerError` event                     | Retry with exponential backoff         |
+| **Tracker drops**            | All pending offers marked stale               | Reannounce in rooms on reconnect       |
+| **Tracker timeout**          | Close WebSocket, treat as disconnect          | Immediate failover / reconnect         |
 
 **ICE Candidate Gathering Failure**
 
-| Scenario | Behavior | Recovery |
-| --- | --- | --- |
-| **STUN/TURN unreachable** | No host candidates; only relay candidates gathered | Attempt to send offer with partial candidates (may still connect via relay); fail after 10s timeout if no candidates at all |
-| **NAT traversal impossible** | ICE checks fail; no P2P connection formed | Emit `IceConnectionFailed` event; keep DataChannel in CONNECTING state for 30s then close; user sees "Cannot reach {contact}" |
-| **ICE candidate timeout** | No candidates gathered after 10s; complete flag set | Send offer/answer with whatever candidates exist; may result in connection failure but do not block indefinitely |
+| Scenario                     | Behavior                                      | Recovery                               |
+| ---------------------------- | --------------------------------------------- | -------------------------------------- |
+| **STUN/TURN unreachable**    | No host candidates; only relay                | Attempt to send offer anyway           |
+| **NAT traversal impossible** | ICE checks fail; no P2P connection            | User sees "Cannot reach {contact}"     |
+| **ICE candidate timeout**    | No candidates gathered after 10s              | Send offer/answer with existing ones   |
 
 **Message Delivery Race Conditions**
 
-| Scenario | Problem | Resolution |
-| --- | --- | --- |
-| **"acc" lost; A-side saved contact before receiving** | A thinks bond is confirmed, but B never saw "acc" arriving, so B rejects on next interaction | A retries offer automatically (max 6 times, 5s apart); if B still rejects, A receives `RequestRejected` event and clears contact |
-| **DataChannel opens but "acc" not sent yet** | Message buffer fills; "acc" arrives out of order with other messages | Mark "acc" as priority; send before any buffered messages; if DataChannel closes before "acc" arrives, retry on reconnect |
-| **B receives offer, accepts, but DataChannel never opens** | Contact saved on both sides but connection fails; both think they're bonded but can't message | Detect timeout on first message send (>30s); emit `ConnectionFailed` event; user can manually retry or remove and re-add contact |
-
-**Error Event Contract:**
-```kotlin
-sealed class P2PEvent {
-    data class TrackerError(val exception: Exception, val retryCount: Int)
-    data class IceConnectionFailed(val contact: Contact, val reason: String)
-    data class DataChannelError(val contact: Contact, val exception: Exception)
-    data class MessageDeliveryFailed(val contact: Contact, val messageId: String)
-    data class ContactUnreachable(val contact: Contact)  // Emitted after 5min RECONNECTING timeout
-    // ... other events
-}
-```
+| Scenario                     | Problem                                       | Resolution                             |
+| ---------------------------- | --------------------------------------------- | -------------------------------------- |
+| **"acc" lost**               | B thinks bonded, A thinks not                 | A retries offer automatically          |
+| **DC open but no "acc"**     | Message buffer fills; out of order            | Mark "acc" as priority; send first     |
+| **Accept but no DC**         | Both think bonded but can't message           | Detect timeout; user manual retry      |
 
 ---
 
@@ -713,13 +701,13 @@ sealed class P2PEvent {
 
 **Activity/Service Lifecycle Integration:**
 
-| Android State | P2PMessenger Behavior |
-| --- | --- |
-| **onCreate()** | initialize() called; loads contacts; connects to tracker; announces in rooms |
-| **onResume()** (app enters foreground) | Resume all pending handshakes; accelerate reconnection retries (1s instead of 5s) |
-| **onPause()** (app goes to background) | No change to active connections; continue announcing in rooms |
-| **Doze/App Standby** | Tracker WebSocket may be killed by OS; on app wake, reconnect triggered; pending messages queued |
-| **onDestroy()** (app killed) | WebSocket closed; all transports closed; session cache wiped; persistent state (contacts, tests) survives |
+| Android State     | P2PMessenger Behavior                                    |
+| ----------------- | -------------------------------------------------------- |
+| **onCreate()**    | initialize(); loads contacts; connects to tracker        |
+| **onResume()**    | Resume handshakes; accelerate reconnection retries       |
+| **onPause()**     | No change to active connections                          |
+| **Doze Mode**     | WebSocket may be killed; reconnect on app wake           |
+| **onDestroy()**   | WebSocket closed; session cache wiped                    |
 
 **Background Restrictions (Android 8+):**
 - App cannot wake itself or access network in background after 15 min idle
@@ -732,14 +720,14 @@ sealed class P2PEvent {
 
 **Thread Ownership:**
 
-| Component | Thread | Ownership | Mutability |
-| --- | --- | --- | --- |
-| `P2PMessenger` singleton | Main + Coroutine IO scope | Single instance, lazy initialized on MainThread | Immutable reference |
-| `peerEventFlow` | Flow consumer (UI, typically Main) | Coroutine scope provided by collector | Collect on UI thread, emit on IO thread |
-| `transports` map | IO scope (WebSocket + ICE) | Accessed from tracker WS callbacks + ICE callbacks | ConcurrentHashMap (thread-safe reads) |
-| `pendingOffers` map | IO scope | Accessed from tracker WS thread on answer arrival | ConcurrentHashMap (atomic operations) |
-| `retryJobs` map | Main (via coroutine scheduler) | Job objects scheduled on DefaultDispatcher | ConcurrentHashMap |
-| WebSocket (`TorrentSignaling`) | IO scope (OkHttp) | Single connection, managed by `TorrentSignaling` | Immutable channel to tracker |
+| Component          | Thread                     | Ownership               | Mutability          |
+| ------------------ | -------------------------- | ----------------------- | ------------------- |
+| `P2PMessenger`     | Main + Coroutine IO        | Single instance         | Immutable ref       |
+| `peerEventFlow`    | Flow consumer (UI)         | Coroutine scope         | Collect on UI       |
+| `transports` map   | IO scope (WS + ICE)        | Accessed from callbacks | ConcurrentHashMap   |
+| `pendingOffers`    | IO scope                   | Accessed from WS thread | ConcurrentHashMap   |
+| `retryJobs` map    | Main                       | Coroutine scheduler     | ConcurrentHashMap   |
+| WebSocket          | IO scope (OkHttp)          | Single connection       | Immutable channel   |
 
 **Coroutine Scope Structure:**
 
@@ -775,12 +763,12 @@ object P2PMessenger {
 
 **Race Condition Mitigations:**
 
-| Race | Problem | Solution |
-| --- | --- | --- |
-| **Handshake + app kill** | Pending offer cleared before answer arrives on restart | On startup, reload contacts but don't re-announce; wait 10s for peer answer in permanent room |
-| **Dual offer (A & B both initiate)** | Both send offers simultaneously; duplicate transports | Compare public keys lexicographically; lower PK initiates; higher PK only answers; singleton transport per peer |
-| **Message send + disconnect** | Message queued in DataChannel, channel closes, message lost | Queue messages in memory until `isConnected=true`; retry on reconnect (max 24h expiry) |
-| **Shutdown + pending retry job** | Job tries to access closed WebSocket | Cancel all retryJobs in scope.cancel() before closing WebSocket |
+| Race                   | Problem                                       | Solution                               |
+| ---------------------- | --------------------------------------------- | -------------------------------------- |
+| **Handshake + kill**   | Pending offer cleared before answer arrives   | Wait 10s for peer answer on restart    |
+| **Dual offer**         | Duplicate transports                          | Compare public keys; lower PK initiates|
+| **Send + disconnect**  | Message lost                                  | Queue messages in memory until open    |
+| **Shutdown + retry**   | Job tries to access closed WS                 | Cancel all retryJobs in scope.cancel() |
 
 ---
 
@@ -792,16 +780,16 @@ All messages exchanged over the encrypted DataChannel are JSON objects with a `t
 
 **Message Types:**
 
-| Type | Required Fields | Example |
-| --- | --- | --- |
-| `text` | `from` (string), `content` (string, max 10k chars), `ts` (unix ms) | `{t:"text", from:"Alice", content:"Hi", ts:1234567890}` |
-| `sreq` | (none) | `{t:"sreq"}` |
-| `srsp` | `pos` (boolean) | `{t:"srsp", pos:true}` |
-| `acc` | (none) | `{t:"acc"}` |
-| `rej` | (none) | `{t:"rej"}` |
-| `bye` | (none) | `{t:"bye"}` |
-| `key_rotation` | `old_pk` (BASE64URL), `new_pk` (BASE64URL), `sig` (BASE64) | `{t:"key_rotation", old_pk:"...", new_pk:"...", sig:"..."}` |
-| `revoke_bond` | `reason` (compromised\|device_lost\|other) | `{t:"revoke_bond", reason:"compromised"}` |
+| Type           | Required Fields                                              | Example                               |
+| -------------- | ------------------------------------------------------------ | ------------------------------------- |
+| `text`         | `from`, `content`, `ts`                                      | `{t:"text", from:"Alice", ...}`       |
+| `sreq`         | (none)                                                       | `{t:"sreq"}`                          |
+| `srsp`         | `pos` (boolean)                                              | `{t:"srsp", pos:true}`                |
+| `acc`          | (none)                                                       | `{t:"acc"}`                           |
+| `rej`          | (none)                                                       | `{t:"rej"}`                           |
+| `bye`          | (none)                                                       | `{t:"bye"}`                           |
+| `key_rotation` | `old_pk`, `new_pk`, `sig`                                    | `{t:"key_rotation", ...}`             |
+| `revoke_bond`  | `reason`                                                     | `{t:"revoke_bond", ...}`              |
 
 **Wire Format (Encrypted):**
 
@@ -832,53 +820,46 @@ This section documents known security and privacy issues, their severity, and pl
 ### 1. Private Keys in SharedPreferences ⚠️ **HIGH SEVERITY**
 
 **Issue:**
-EC P-256 private keys are generated at runtime and persisted as JSON strings in Android `SharedPreferences`. On a non-encrypted device or with root access, any process can read the raw SharedPreferences database file (`/data/data/com.davv.trusti/shared_prefs/trusti_keys.xml`) and extract the private key in plaintext.
+EC P-256 private keys are generated at runtime and persisted as JSON strings in Android `SharedPreferences`. On a non-encrypted device or with root access, any process can read the raw SharedPreferences database file and extract the private key in plaintext.
 
 **Impact:**
-- Complete compromise of the user's identity and all past messages if device is stolen
+- Complete compromise of identity and all past messages if device is stolen
 - No hardware security module protection
 - Forward secrecy does not protect past messages if the device is compromised *after* the fact
 
 **Current Status:**
-Keys are stored in `crypto/KeyManager.kt` as DER-encoded strings. This is safe enough for the MVP but must be upgraded for production.
+Keys are stored in `crypto/KeyManager.kt` as DER-encoded strings. Safe enough for MVP but must be upgraded.
 
 **Mitigation:**
 Use Android `KeyStore` (available on API 23+, minSdk is 26):
-- Generate and store private keys in the OS-level KeyStore (hardware-backed on API 30+)
-- Private keys never leave the Keystore; sign/ECDH operations happen inside the Keystore
+- Generate and store private keys in the OS-level KeyStore
+- Private keys never leave the Keystore; sign/ECDH operations happen inside
 - Only public keys are readable from SharedPreferences
-- Implementation: Refactor `KeyManager` to use `KeyPairGenerator` with `AndroidKeyStore` provider
 - Timeline: Required before production release
 
 **Affected Files:**
 - `crypto/KeyManager.kt` (generate/load logic)
 - `smp/Encryption.kt` (ECDH, decrypt)
-- `smp/WebRtcTransport.kt` (SDP signing—see issue #2)
+- `smp/WebRtcTransport.kt` (SDP signing)
 
 ---
 
 ### 2. Unauthenticated SDP Identity Attributes ⚠️ **HIGH SEVERITY**
 
 **Issue:**
-During the handshake, A sends an offer with `x-trusti-pk` and `x-trusti-name` SDP attributes (plus optional name + disambiguation). These attributes are **not signed or authenticated**. A malicious tracker operator (or MITM at the tracker layer) can rewrite these attributes to impersonate a different peer.
+During the handshake, A sends an offer with `x-trusti-pk` and `x-trusti-name` SDP attributes. These attributes are **not signed or authenticated**. A malicious tracker operator can rewrite these attributes to impersonate a different peer.
 
-**Attack scenario:**
-1. A scans a QR code displaying B's public key
-2. A sends an offer to B's personal room with A's identity in SDP attributes
-3. Attacker intercepts the offer at the tracker and replaces `x-trusti-pk` with Attacker's key
-4. B receives the offer and sees "Attacker" is calling, not "A"
-5. B user accepts the bond thinking they are bonding with A, but they are bonded with Attacker
+**Impact:**
+- B user accepts the bond thinking they are bonding with A, but they are bonded with Attacker.
 
 **Current Status:**
-No SDP signing is implemented. After the DataChannel opens and `acc`/`rej` messages flow, the identity is implicitly confirmed (because B knows who they accepted), but during the initial handshake there is a brief window of vulnerability.
+No SDP signing is implemented. Identity is implicitly confirmed after the DataChannel opens, but initial handshake is vulnerable.
 
 **Mitigation:**
-Sign the SDP offer (or at minimum, the public key + a nonce) with A's private key, so B can verify using the scanned A_pub:
+Sign the SDP offer with A's private key:
 - A computes a signature over `sha256(offer SDP)` using private key
 - A includes the signature in an SDP attribute: `a=x-trusti-sig:<BASE64_SIG>`
 - B receives offer, verifies signature using the scanned public key
-- If signature fails, reject the offer and warn the user
-- Implementation: Add signature generation in `WebRtcTransport.createOffer()`, verification in `WebRtcTransport.handleOffer()`, requires private key signing capability (see issue #1)
 - Timeline: Required before production release
 
 **Affected Files:**
@@ -890,214 +871,69 @@ Sign the SDP offer (or at minimum, the public key + a nonce) with A's private ke
 ### 3. QR Code Exchange Lacks TOFU / Display Verification ⚠️ **MEDIUM SEVERITY**
 
 **Issue:**
-The QR code itself contains only B's public key. There is no verification step after scanning to ensure that:
-1. The scanned QR was actually displayed by B (not intercepted via shoulder-surfing or screenshot)
-2. The person showing the QR is actually the person you think they are (no identity binding)
+The QR code itself contains only B's public key. No verification step after scanning to ensure:
+1. Scanned QR was actually displayed by B (not intercepted)
+2. Person showing QR is actually the person you think they are
 
-**Attack scenario:**
-1. Attacker shoulder-surfs and records B's QR code
-2. Attacker scans the QR with their own device, bonding as "B" from Attacker's perspective
-3. Attacker then presents themselves to Alice as "Bob" in person, but the QR bonds with the Attacker's device instead
+**Impact:**
+- Shoulder-surfing or phishing attacks.
 
 **Current Status:**
-No out-of-band verification (e.g., short safety numbers) is implemented. After bonding and messaging, users will naturally verify identities through conversation, but the initial handshake has no anti-phishing step.
+No out-of-band verification is implemented. Users verify identities through conversation after bonding.
 
 **Mitigation (Post-MVP):**
 Implement TOFU (Trust On First Use) with display verification:
-- After scanning QR and receiving the offer, show a **short safety number** (e.g., first 6 chars of `sha256(sorted(A_pub || B_pub))` in hex)
-- Display the same safety number on both devices during the handshake
-- User reads the safety number aloud or confirms visually before accepting
-- This prevents MITM attacks and ties the QR scan to a specific physical interaction
-- Implementation: Add UI dialog during `IncomingRequest` to display safety number
-- Timeline: Post-MVP (good-to-have for security, not blocking initial release)
-
-**Safety Number Verification Flow:**
-```mermaid
-sequenceDiagram
-    participant A as A<br/>(User scans QR)
-    participant A_Device as A Device
-    participant B_Device as B Device
-    participant B as B<br/>(Receives offer)
-
-    rect rgba(0, 128, 255, 0.4)
-    Note over A,A_Device: A scans B's QR
-    A_Device->>A_Device: Compute safety_num<br/>= first_6_chars(<br/>sha256(sorted(A_pub||B_pub)))
-    A_Device->>A: Display dialog:<br/>"Verify with Alice:"<br/>Safety #: 3F7A9C
-    end
-
-    A_Device->>B_Device: Send offer<br/>via tracker
-
-    rect rgba(255, 170, 0, 0.4)
-    B_Device->>B_Device: Receive offer
-    B_Device->>B_Device: Compute safety_num<br/>= same formula
-    B_Device->>B: Show dialog:<br/>"Bob is calling"<br/>Safety #: 3F7A9C<br/>[Accept] [Decline]
-    end
-
-    rect rgba(0, 255, 0, 0.4)
-    Note over A,B: Out-of-band verification
-    A->>B: (In person / call)<br/>"Do you see 3F7A9C?"
-    B-->>A: "Yes, I see it!"
-    end
-
-    rect rgba(0, 255, 0, 0.4)
-    Note over B: User taps Accept
-    B->>B_Device: [Accept]
-    B_Device->>B_Device: Send "acc" message
-    B_Device->>A_Device: DataChannel opens
-    end
-
-    Note over A,B: ✓ Bond verified<br/>TOFU established
-```
+- Show a **short safety number** on both devices during the handshake
+- User confirms visually before accepting
+- Timeline: Post-MVP
 
 ---
 
 ### 4. No Key Rotation or Bond Revocation Mechanism ⚠️ **MEDIUM SEVERITY**
 
 **Issue:**
-- If a device is lost, compromised, or the user's key is accidentally exposed, there is no documented mechanism to rotate keys or revoke bonds
+- If a device is lost or compromised, there is no mechanism to rotate keys or revoke bonds
 - All contacts remain bonded with the compromised key
-- Users cannot remotely revoke access to their health data from a lost device
-- The old device retains all contact data and can continue sending messages as the compromised identity
 
 **Current Status:**
-No key rotation or revocation is implemented. The only option is to delete the app and start over with a new device, manually re-scanning QR codes with all contacts.
+No rotation or revocation. Only option is to delete the app and start over.
 
 **Mitigation (Post-MVP):**
 Implement key rotation and optional bond revocation:
-- **Key rotation:** User can initiate "rotate keys" → generates new key pair → stores in KeyStore → sends "key_rotation" message to all bonded contacts → all contacts update the stored public key
-- **Bond revocation:** Contacts can send "revoke_bond" to all bonded peers to explicitly deny access from a specific public key
-- Implementation: Add new message types in P2PMessenger, update ContactStore to version the public key
+- **Key rotation:** User initiates "rotate keys" → sends "key_rotation" message to all contacts
+- **Bond revocation:** Contacts can send "revoke_bond" to explicitly deny access
 - Timeline: Recommended before any public release
-
-**Key Rotation Flow:**
-```mermaid
-sequenceDiagram
-    participant User as User<br/>(Device compromised)
-    participant Device as Device A<br/>(Old key: K_old)
-    participant Contacts as All Bonded<br/>Contacts
-    participant KeyStore as KeyStore
-
-    User->>Device: Settings → Rotate Keys
-
-    rect rgba(0, 255, 0, 0.4)
-    Note over Device,KeyStore: Generate new key pair
-    Device->>KeyStore: generateKeyPair()
-    KeyStore-->>Device: K_new_pub, K_new_priv<br/>(in KeyStore)
-    Device->>Device: Store K_new_pub<br/>in SharedPrefs
-    end
-
-    rect rgba(0, 128, 255, 0.4)
-    Note over Device,Contacts: Notify all contacts
-    Device->>Contacts: Broadcast message:<br/>"key_rotation"<br/>{old_pk: K_old_pub,<br/>new_pk: K_new_pub,<br/>sig: K_old_priv(new_pk)}
-    end
-
-    rect rgba(0, 255, 0, 0.4)
-    Note over Contacts: Each contact verifies
-    Contacts->>Contacts: Verify sig with K_old_pub
-    alt Signature Valid
-        Contacts->>Contacts: Update ContactStore<br/>K_old_pub → K_new_pub
-        Contacts->>Contacts: Future messages<br/>use K_new_pub
-    else Invalid
-        Contacts->>Contacts: ❌ Reject rotation<br/>Continue using K_old_pub
-    end
-    end
-
-    Note over Device,Contacts: ✓ Bond preserved<br/>Identity rotated
-```
 
 ---
 
-### 5. WebTorrent Tracker Dependency with No Fallback ⚠️ **LOW SEVERITY (SPECULATIVE)**
+### 5. WebTorrent Tracker Dependency with No Fallback ⚠️ **LOW SEVERITY**
 
 **Issue:**
-The app relies on a single public WebTorrent tracker (`wss://tracker.openwebtorrent.com`) for signaling. If the tracker is down, offline, or censored:
-- New handshakes cannot complete (no signaling channel)
+Relies on a single public WebTorrent tracker. If down or censored:
+- New handshakes cannot complete
 - Existing contacts cannot reconnect
-- The entire app becomes non-functional
-
-While the tracker is generally reliable, depending on third-party infrastructure you do not control introduces a single point of failure for a privacy app.
 
 **Current Status:**
-The tracker is hardcoded in `smp/TorrentSignaling.kt`. There is no fallback mechanism, mirror, or self-hosted option.
+Hardcoded in `smp/TorrentSignaling.kt`. No fallback mechanism.
 
 **Mitigation (Post-MVP):**
 Implement tracker resilience:
-- **Multiple tracker support:** Allow connecting to multiple trackers (redundancy)
-- **Self-hosted option:** Publish documentation for self-hosting a WebTorrent tracker; allow config override in app settings
-- **Direct IP fallback:** For already-bonded contacts, attempt direct TCP connection to the peer's last-known IP (requires storing IP history)
-- **Local network fallback:** If on the same local network, use mDNS or BLE discovery without tracker
-- Implementation: Parameterize tracker URL, add tracker failover logic, optional IP backup discovery
-- Timeline: Post-MVP (good for robustness, not blocking initial release)
-
-**Multi-Tracker Failover Architecture:**
-```mermaid
-graph TD
-    App["App Start<br/>Initialize Trackers"]
-
-    App --> T1["🌐 Tracker 1<br/>wss://tracker.openwebtorrent.com<br/>(Primary)<br/>Status: ?"]
-
-    T1 -->|Connected| Primary["✓ Use Primary"]
-    T1 -->|Timeout/Down| T2["🌐 Tracker 2<br/>wss://self-hosted.example.com<br/>(Fallback)<br/>Status: ?"]
-
-    T2 -->|Connected| Secondary["✓ Use Fallback"]
-    T2 -->|Timeout/Down| T3["🌐 Tracker 3<br/>wss://alternative-tracker.org<br/>(Last Resort)<br/>Status: ?"]
-
-    T3 -->|Connected| Tertiary["✓ Use Last Resort"]
-    T3 -->|All Trackers Down| LocalFallback["📡 Local Fallback<br/>mDNS/BLE Discovery<br/>Direct IP (if known)"]
-
-    Primary --> Operation["Operating<br/>Announce/Listen"]
-    Secondary --> Operation
-    Tertiary --> Operation
-    LocalFallback --> Operation
-
-    Operation -->|Primary recovers| ReconnectPrimary["Reconnect to Primary"]
-    ReconnectPrimary --> Primary
-
-    style App fill:#0080ff66,stroke:#0080ff,stroke-width:2px
-    style T1 fill:#00ff0066,stroke:#00ff00,stroke-width:2px
-    style T2 fill:#ffaa0066,stroke:#ffaa00,stroke-width:2px
-    style T3 fill:#ff000066,stroke:#ff0000,stroke-width:2px
-    style LocalFallback fill:#ff00ff66,stroke:#ff00ff,stroke-width:2px
-    style Operation fill:#00ffff66,stroke:#00ffff,stroke-width:2px
-```
-
-**Failover Decision Tree:**
-```mermaid
-sequenceDiagram
-    participant TorrentSig as TorrentSignaling
-    participant T1 as Primary<br/>Tracker
-    participant T2 as Fallback<br/>Tracker
-    participant LocalMDNS as Local<br/>mDNS/BLE
-
-    TorrentSig->>T1: Connect
-
-    alt T1 responds within timeout
-        T1-->>TorrentSig: ✓ Connected
-        TorrentSig->>TorrentSig: Use Primary
-    else T1 timeout/error
-        TorrentSig->>T2: Fallback: Connect
-        alt T2 responds
-            T2-->>TorrentSig: ✓ Connected
-            TorrentSig->>TorrentSig: Use Fallback
-        else T2 timeout/error
-            TorrentSig->>LocalMDNS: Final fallback<br/>mDNS + last-known IPs
-            LocalMDNS-->>TorrentSig: ✓ Local discovery
-            TorrentSig->>TorrentSig: Direct P2P<br/>on local network
-        end
-    end
-```
+- **Multiple tracker support:** Redundancy
+- **Self-hosted option:** Configurable tracker URL
+- **Direct IP fallback:** For already-bonded contacts
+- Timeline: Post-MVP
 
 ---
 
 ## Summary Table
 
-| Issue | Severity | Category | Mitigation | Timeline |
-| --- | --- | --- | --- | --- |
-| Private keys in SharedPreferences | HIGH | Storage | Use Android KeyStore | Required before production |
-| Unauthenticated SDP identity | HIGH | Handshake | Sign SDP with private key | Required before production |
-| QR lacks TOFU verification | MEDIUM | Phishing | Add safety number verification | Post-MVP (good-to-have) |
-| No key rotation / revocation | MEDIUM | Recovery | Implement key rotation message | Post-MVP (recommended) |
-| Single tracker dependency | LOW | Reliability | Multi-tracker + self-hosted option | Post-MVP (robustness) |
+| Issue                         | Severity | Category    | Mitigation                     | Timeline           |
+| ----------------------------- | -------- | ----------- | ------------------------------ | ------------------ |
+| Keys in SharedPreferences     | HIGH     | Storage     | Use Android KeyStore           | Required before PR |
+| Unauthenticated SDP identity  | HIGH     | Handshake   | Sign SDP with private key      | Required before PR |
+| QR lacks TOFU verification    | MEDIUM   | Phishing    | Add safety number verification | Post-MVP           |
+| No key rotation / revocation  | MEDIUM   | Recovery    | Implement key rotation message  | Post-MVP           |
+| Single tracker dependency     | LOW      | Reliability | Multi-tracker support          | Post-MVP           |
 
 ---
 
@@ -1105,106 +941,32 @@ sequenceDiagram
 
 ### Flow 1: A Scans B's QR Code
 
-```
-A: Opens app → sees QR code camera
-B: Displays own QR code
-
-A: Points camera at B's QR → taps "Scan"
-   ↓ (behind the scenes)
-   A extracts B's public key
-   A clears any stale session cache for this peer
-   A sends WebRTC offer to B's personal room (retries every 5s)
-   ↓
-B: Receives A's offer (from tracker)
-   B shows dialog: "Alice wants to connect. Accept? [Y/N]"
-   ↓
-A: If B accepts
-   ↓ (hidden to user)
-   B receives A's offer → creates answer → sends back via tracker
-   A receives B's answer → DataChannel opens
-   B sends "acc" message over encrypted channel
-   A receives "acc" → saves B as contact permanently
-   ↓
-A and B: Connected ✓ Can now see each other's status
-          (Send/receive test result status updates)
-
-B: If B declines
-   ↓ (hidden to user)
-   B sends "rej" message
-   A receives "rej" → stops retrying offer
-   ↓
-A and B: Not connected, bond rejected (can retry by scanning again)
-```
+1. A Point camera at B's QR → taps "Scan"
+2. A extracts B's public key and sends WebRTC offer to B's personal room
+3. B receives A's offer and shows dialog: "Accept? [Y/N]"
+4. If B accepts: B creates answer, DC opens, B sends "acc", A saves B.
+5. If B declines: B sends "rej", A stops retrying.
 
 ### Flow 2: A Checks B's Test Status
 
-```
-A: Opens B's contact in app
-   P2PMessenger sends "sreq" (status request)
-   ↓
-B: (if online)
-   Receives "sreq"
-   Reads local test results from disk
-   Sends "srsp" with current positive/negative flag
-   ↓
-A: Receives "srsp" → updates UI showing B's status
-
-B: (if offline)
-   ↓
-A: No response, so A queues the request in PendingStatusStore
-   ↓
-B: Comes back online → reconnects via permanent room
-   ↓
-A: Detects B is online → delivers queued status atomically
-```
+1. A opens contact → sends "sreq"
+2. B (online): Receives "sreq", reads results, sends "srsp"
+3. B (offline): A queues request in `PendingStatusStore`
+4. B comes back online: A delivers queued status
 
 ### Flow 3: A Removes B from Contacts
 
-```
-A: Opens contacts list → long-press on B → Delete
-   ↓ (behind the scenes)
-   A sends "bye" message to B (if connected)
-   A clears entire session cache for B
-   A removes from permanent room
-   A deletes B from disk (ContactStore)
-   ↓
-B: (if online)
-   Receives "bye" message
-   B also deletes A from disk
-   B removes from permanent room
-   ↓
-A and B: Bond is completely dissolved
-          (if they want to reconnect, must scan QR again)
-```
+1. A long-press on B → Delete
+2. A sends "bye" to B (if connected), clears session cache, deletes B from disk.
+3. B (online): Receives "bye", also deletes A.
 
 ### Flow 4: Reconnection After App Restart
 
-```
-A: Kills app
-   (All session cache wiped—transports, pending offers, etc.)
-
-A: Opens app again
-   ↓ (behind the scenes)
-   App loads all saved contacts from disk
-   Connects to tracker
-   Announces in permanent room for each saved contact
-   ↓
-B: (also reopened app at the same time)
-   Loads saved contacts
-   Connects to tracker
-   Announces in permanent room
-   ↓
-Tracker: Sees both A and B announcing in the same room
-   ↓
-A: (whoever initiates first based on lexicographic order of keys)
-   Creates offer using permanent room
-   Sends offer to tracker
-   ↓
-B: Receives offer → creates answer (no dialog this time—already saved)
-   Sends answer via tracker
-   ↓
-A and B: DataChannel opens → immediately start syncing latest status
-```
+1. Both load saved contacts and announce in permanent rooms.
+2. Tracker delivers peer lists.
+3. Initiator creates offer in permanent room.
+4. Answerer creates answer (no dialog).
+5. DataChannel opens → sync latest status.
 
 ---
 
@@ -1212,152 +974,33 @@ A and B: DataChannel opens → immediately start syncing latest status
 
 ### P2PMessenger (Main Singleton)
 
-The `P2PMessenger` singleton orchestrates all peer-to-peer communication. Access via:
 ```kotlin
 val messenger = P2PMessenger.get(context)
 ```
 
-#### Key Functions
-
-**`initialize()`**
-- Initializes the messenger on app startup
-- Loads your EC P-256 key pair (or generates it on first launch)
-- Connects to WebTorrent tracker
-- Loads saved contacts and rejoins permanent rooms
-- Starts listening for incoming QR scans
-```kotlin
-// Call once on app launch
-P2PMessenger.get(context).initialize()
-```
-
-**`startHandshake(contact: Contact)`**
-- Called when user scans a QR code to add a new contact
-- Stores contact in session cache (not persistent yet—pending B's approval)
-- Clears any stale session state from previous attempts with this contact
-- Creates and sends a WebRTC offer to B's personal room
-- Retries offering every 5 seconds until B responds or user cancels
-```kotlin
-// User scanned QR → Device A initiates handshake
-val contact = Contact(name = "Alice", publicKey = qrPublicKey)
-messenger.startHandshake(contact)
-```
-
-**`approveIncomingRequest(contactPk: String)`**
-- Called when B user taps "Accept" on the incoming request dialog
-- Saves the contact permanently to device storage (ContactStore)
-- Sends "acc" message to A once DataChannel is open
-- Requests A's status (sends sreq message)
-- Joins permanent room for future reconnections
-```kotlin
-// B user taps Accept on incoming request dialog
-messenger.approveIncomingRequest(contactPublicKey)
-```
-
-**`rejectIncomingRequest(contactPk: String)`**
-- Called when B user taps "Decline" on the incoming request dialog
-- Sends "rej" message to A so A stops retrying
-- Closes transport and clears all session cache for this contact
-- Contact is never saved—the bond is rejected entirely
-```kotlin
-// B user taps Decline on incoming request dialog
-messenger.rejectIncomingRequest(contactPublicKey)
-```
-
-**`closeContact(contactPk: String)`**
-- Called when user removes a contact from their contact list
-- Sends "bye" message to peer
-- Clears all session cache (transport, pending offers, etc.)
-- Removes from permanent room tracking
-- Deletes pending queued status updates
-```kotlin
-// User taps Delete on contact in contacts list
-messenger.closeContact(contactPublicKey)
-```
-
-**`peerEventFlow: SharedFlow<PeerEvent>`**
-- Collect incoming events from peers (UI subscribes to this)
-- Emitted events:
-  - `ChannelOpened(contact, isNew)` → DataChannel is ready, can send/receive
-  - `ChannelClosed(contact)` → Connection dropped
-  - `IncomingRequest(contactPk, username, disambiguation)` → B received A's offer, show dialog
-  - `StatusResponse(contactPk, hasPositive)` → Received test status from peer
-  - `RequestRejected(contactPk)` → B declined the handshake attempt
-  - `BondRemoved(contactPk)` → Peer sent "bye" message
-```kotlin
-// UI collects events to show dialogs and update UI
-messenger.peerEventFlow.collect { event ->
-    when (event) {
-        is IncomingRequest -> showAcceptDeclineDialog(event.contactPk, event.username)
-        is ChannelOpened -> updateContactStatus(event.contact, online = true)
-        is ChannelClosed -> updateContactStatus(event.contact, online = false)
-        // ... handle other events
-    }
-}
-```
+- **`initialize()`**: Init keys, connect tracker, join rooms.
+- **`startHandshake(contact)`**: Initiate bond via QR scan.
+- **`approveIncomingRequest(pk)`**: B accepts bond.
+- **`rejectIncomingRequest(pk)`**: B declines bond.
+- **`closeContact(pk)`**: Remove bond.
+- **`peerEventFlow`**: Collect incoming events.
 
 ### Encryption
 
-**`Encryption.encrypt(plaintext: ByteArray, recipientPublicKey: ByteArray): ByteArray`**
-- Encrypts plaintext for a specific recipient
-- Generates ephemeral EC P-256 key pair, performs ECDH with recipient's public key
-- Derives 256-bit AES key via HKDF-SHA256
-- Generates random 12-byte nonce, encrypts with AES-256-GCM
-- Returns packed format: `[2-byte keyLen][ephemKey][nonce][ciphertext+tag]`
-- Each message gets a fresh ephemeral key (forward secrecy)
-
-**`Encryption.decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray`**
-- Decrypts ciphertext using recipient's private key
-- Parses wire format to extract ephemeral public key, nonce, and ciphertext
-- Performs ECDH with ephemeral public key to recover shared secret
-- Derives same AES-256 key via HKDF-SHA256
-- Decrypts and verifies GCM auth tag
-- Throws `DecryptionException` if format is invalid or tag verification fails
+- **`encrypt(plaintext, recipientPub)`**: ECDH + AES-256-GCM.
+- **`decrypt(data, privateKey)`**: Parsed wire format + ECDH decrypt.
 
 ### WebRtcTransport
 
-**`createOffer()`**
-- Initiator (A) side: creates WebRTC offer
-- Gathers ICE candidates (vanilla ICE—all bundled in SDP)
-- Sets local description and waits for ICE gathering to complete
-- Once complete, invokes `onGatheringComplete` callback to send offer via tracker
-
-**`handleOffer(sdp: String, offerId: String, fromPeerId: String)`**
-- Answerer (B) side: receives offer from tracker
-- Sets remote description (A's offer with ICE candidates)
-- Creates answer, sets local description
-- Waits for ICE gathering, then invokes `onGatheringComplete` to send answer via tracker
-
-**`handleAnswer(sdp: String)`**
-- Initiator (A) side: receives answer from tracker
-- Sets remote description (B's answer)
-- ICE connectivity checks begin, DataChannel opens once connection succeeds
+- **`createOffer()`**: Initiator side (vanilla ICE).
+- **`handleOffer(sdp, offerId, peerId)`**: Answerer side (vanilla ICE).
+- **`handleAnswer(sdp)`**: Initiator side sets remote answer.
 
 ### TorrentSignaling
 
-**`announce(roomId: String)`**
-- Join a room (listen for incoming offers)
-- Used by answerer (B) on personal room, or both peers on permanent room
-
-**`announceWithOffer(roomId, offerId, sdp, myPk, sig, myUsername, myDisambig)`**
-- Send offer into a room
-- Used by initiator (A) to send offer to B's personal room or permanent room
-
-**`sendAnswer(roomId, toPeerId, offerId, sdp)`**
-- Send answer back to offerer
-- Used by answerer (B) to respond to A's offer
-
-### ContactStore & TestsStore
-
-**`ContactStore.save(ctx, contact: Contact)`**
-- Persist a contact to SharedPreferences (JSON list)
-- Called after B approves or A receives "acc"
-
-**`ContactStore.load(ctx): List<Contact>`**
-- Load all saved contacts from SharedPreferences on app startup
-
-**`TestsStore.load(ctx): List<MedicalRecord>`**
-- Load all saved medical test records
-- Used when computing hasPositive flag for status responses
+- **`announce(roomId)`**: Join room.
+- **`announceWithOffer(roomId, offerId, sdp, ...)`**: Send offer.
+- **`sendAnswer(roomId, toPeerId, offerId, sdp)`**: Send answer.
 
 ---
 
@@ -1366,28 +1009,23 @@ messenger.peerEventFlow.collect { event ->
 ```
 app/src/main/java/com/davv/trusti/
 ├── crypto/
-│   └── KeyManager.kt          EC P-256 key pair generation and storage
+│   └── KeyManager.kt          Key storage
 ├── connection/
-│   └── QrHelper.kt            QR generation and PeerInfo parsing
+│   └── QrHelper.kt            QR gen/parse
 ├── model/
-│   ├── Contact.kt             name, publicKey, lastSeen
-│   ├── Message.kt             chat message
-│   └── MedicalRecord.kt       test result (disease, date, POSITIVE/NEGATIVE)
+│   ├── Contact.kt             Peer model
+│   └── MedicalRecord.kt       Test results
 ├── smp/
-│   ├── Encryption.kt          ECDH + AES-256-GCM encrypt/decrypt
-│   ├── TorrentSignaling.kt    WebTorrent tracker WebSocket client
-│   ├── WebRtcTransport.kt     RTCPeerConnection + DataChannel per contact
-│   └── P2PMessenger.kt        Singleton orchestrating signaling, transport, encryption
+│   ├── Encryption.kt          E2E Crypto
+│   ├── TorrentSignaling.kt    Tracker WS
+│   ├── WebRtcTransport.kt     WebRTC stack
+│   └── P2PMessenger.kt        P2P Orchestrator
 ├── utils/
-│   ├── ContactStore.kt        JSON persistence for contacts
-│   ├── MessageStore.kt        Per-contact message persistence
-│   ├── MedicalStore.kt        JSON persistence for medical records
-│   ├── PendingStatusStore.kt  Queued status updates for offline contacts
-│   └── ProfileManager.kt      Display name + disambiguation (adjective-noun)
+│   ├── ContactStore.kt        Persistence
+│   └── ProfileManager.kt      User profile
 └── ui/
     ├── CommonComponents.kt
-    ├── DiseaseTestResult.kt   Disease row with +/−/? chips
-    └── DiseaseTestList.kt     List of diseases with results
+    └── DiseaseTestResult.kt   UI components
 ```
 
 ---
@@ -1395,82 +1033,25 @@ app/src/main/java/com/davv/trusti/
 ## User Features
 
 ### QR Code Display
-- **Tap the QR code** to see its contents and explanation
-- Shows your public key, username, and disambiguation
-- Copy button to share the QR URI via text/email
-- Explains what each field does and how bonding works
-
-The QR code contains (in URI format):
-```
-trusti://peer?pk=<BASE64URL_PUBKEY>&u=<USERNAME>&d=<DISAMBIGUATION>
-```
+- **Tap the QR code** to see contents.
+- URI: `trusti://peer?pk=<PK>&u=<USER>&d=<DISAMBIG>`
 
 ---
 
 ## Implementation Notes & Constraints
 
-### Issue #1: RECONNECTING Silent Gap (RESOLVED via ContactUnreachable event)
+### Issue #1: RECONNECTING Silent Gap (RESOLVED)
+- Emit `ContactUnreachable(contact)` event after 5 min timeout.
 
-**Problem:** After 5 minutes of retry timeout in RECONNECTING state, the connection would transition to IDLE with no user feedback. The contact remains saved but the UI has no way to show it's unreachable.
+### Issue #2: pendingContactByPk Session-Only (INTENTIONAL)
+- Contact lost if A dies before "acc" received. User must re-scan.
 
-**Resolution:** Emit `ContactUnreachable(contact)` event when RECONNECTING times out. UI can then:
-- Stop showing a stale "online" badge
-- Display "last seen" time instead
-- Offer user a manual "Retry" button
+### Issue #3: Encryption.kt API Design for KeyStore (HIGH PRIORITY)
+- Transition from raw `PrivateKey` to `keystoreAlias`.
 
-### Issue #2: pendingContactByPk Session-Only Storage (INTENTIONAL)
-
-**Design:** During OFFERING state, peer A holds the scanned contact in session-only memory (`pendingContactByPk`) until receiving the "acc" approval message.
-
-**Risk:** If A's process dies between OFFERING and receiving "acc", the contact is silently lost (no recovery path on restart).
-
-**Decision:** This is intentional and acceptable because:
-1. User must re-scan the QR code (same cost as first scan)
-2. Alternative (persistent pending contacts) adds complexity and requires cleanup logic
-3. Session lifetime is typically minutes, not hours
-
-**Note:** Pending contacts are **never** written to SharedPreferences; they live entirely in memory.
-
-### Issue #3: Encryption.kt API Design for Android KeyStore (HIGH PRIORITY)
-
-**Problem:** The original Encryption.kt passes raw `PrivateKey` objects to `decrypt()`:
 ```kotlin
-decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray
-```
-
-With Android KeyStore migration, private keys become **opaque aliases**—they never leave the secure enclave, and raw key extraction is impossible. The ECDH operation must instead use the alias string directly.
-
-**Solution:** Redesign Encryption.kt's decrypt API to accept a KeyStore alias:
-```kotlin
-// Before (won't work with KeyStore)
-fun decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray
-
-// After (KeyStore-aware)
 fun decrypt(data: ByteArray, keystoreAlias: String): ByteArray
 ```
-
-**Implementation Pattern:**
-```kotlin
-fun decrypt(data: ByteArray, keystoreAlias: String): ByteArray {
-    val ks = KeyStore.getInstance("AndroidKeyStore")
-    ks.load(null)
-    val keyEntry = ks.getEntry(keystoreAlias, null) as KeyStore.PrivateKeyEntry
-    val privateKey = keyEntry.privateKey
-
-    // Now use KeyAgreement with KeyStore-backed key
-    // (still opaque, but we don't need to extract it)
-    val ka = KeyAgreement.getInstance("ECDH", "AndroidKeyStore")
-    ka.init(privateKey)
-    // ... continue with ECDH
-}
-```
-
-**API Contract Summary:**
-- **Encryption module** (`Encryption.kt`): Receives keystoreAlias strings, never raw PrivateKey objects
-- **Key management module** (`KeyManager.kt`): Manages alias creation and exposes only `getKeystoreAlias()` and `getPublicKeyBytes()`
-- **P2PMessenger** (future): Calls `Encryption.decrypt(data, KeyManager.getKeystoreAlias())`
-
-This design ensures private keys are **never extracted**, meeting Android KeyStore's zero-exposure guarantee.
 
 ---
 
@@ -1478,7 +1059,7 @@ This design ensures private keys are **never extracted**, meeting Android KeySto
 
 - minSdk 26 (Android 8.0)
 - targetSdk / compileSdk 36
-- Kotlin 2.0.21, AGP 8.7.3, Gradle 8.11+
+- Kotlin 2.0.21, AGP 8.7.3
 
 ```bash
 ./gradlew assembleDebug
