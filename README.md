@@ -95,8 +95,8 @@ trusti://peer?pk=<BASE64URL_PUBKEY>
 ```mermaid
 sequenceDiagram
     participant A as Device A
-    participant B as Device B
     participant Tracker as WebTorrent Tracker
+    participant B as Device B
 
     rect rgba(0, 255, 255, 0.4)
     Note over B: Display own QR<br/>QR = trusti://peer?pk=B_pub
