@@ -127,7 +127,7 @@ class HomeFragment : Fragment() {
         FontExtensions.applyTsukimiFontFromResources(binding.txtTitle, requireContext(), 400)
         FontExtensions.applyTsukimiFontFromResources(binding.btnScan, requireContext(), 500)
 
-        // Add ComposeView for PrivacyChoicesDialog
+        // Add ComposeView for PrivacyChoicesDialog to activity's root
         dialogComposeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
@@ -154,7 +154,10 @@ class HomeFragment : Fragment() {
                 }
             }
         }
-        (binding.root as android.view.ViewGroup).addView(dialogComposeView)
+        val activity = requireActivity() as? MainActivity
+        activity?.let {
+            (it.window.decorView as? android.view.ViewGroup)?.addView(dialogComposeView)
+        }
     }
 
     override fun onResume() {

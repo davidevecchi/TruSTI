@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        (binding.root as android.view.ViewGroup).addView(dialogComposeView)
+        (window.decorView as? android.view.ViewGroup)?.addView(dialogComposeView)
     }
 
     private fun handlePeerEvent(event: P2PMessenger.PeerEvent) {
