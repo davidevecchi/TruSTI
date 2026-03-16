@@ -7,6 +7,7 @@ A privacy-first Android app for sharing STI test results with trusted contacts. 
 ```mermaid
 graph TB
     QR["🔳 QR Code<br/>trusti://peer?pk=B_pub"]
+    QR -->|Scan| A_Key
 
     subgraph DevA["Device A"]
         A_Key["🔑 EC P-256 Key<br/>A_pub, A_priv"]
@@ -16,10 +17,8 @@ graph TB
         A_WebRTC["📡 WebRTC DataChannel"]
     end
 
-    subgraph Infra["Infrastructure"]
-        Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com"]
-        STUN["🧭 STUN/TURN<br/>stun.l.google.com"]
-    end
+    Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com"]
+    STUN["🧭 STUN/TURN<br/>stun.l.google.com"]
 
     subgraph DevB["Device B"]
         B_Key["🔑 EC P-256 Key<br/>B_pub, B_priv"]
@@ -28,8 +27,6 @@ graph TB
         B_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
         B_WebRTC["📡 WebRTC DataChannel"]
     end
-
-    QR -->|Scan| A_Key
 
     A_Key --> A_Messenger
     B_Key --> B_Messenger
@@ -53,23 +50,23 @@ graph TB
 
     A_WebRTC <-->|P2P Encrypted<br/>Messages| B_WebRTC
 
-    style DevA fill:#2c3e50,stroke:#3498db,color:#ecf0f1,stroke-width:2px
-    style DevB fill:#2c3e50,stroke:#3498db,color:#ecf0f1,stroke-width:2px
-    style Infra fill:#34495e,stroke:#e74c3c,color:#ecf0f1,stroke-width:2px
+    style DevA fill:#ffffff00,stroke:#0080ff,color:#000,stroke-width:2px
+    style DevB fill:#ffffff00,stroke:#0080ff,color:#000,stroke-width:2px
+    style Infra fill:#ffffff00,stroke:#ff0000,color:#000,stroke-width:2px
 
-    style A_Key fill:#27ae60,stroke:#229954,color:#ecf0f1
-    style A_Messenger fill:#3498db,stroke:#2980b9,color:#ecf0f1
-    style A_Encrypt fill:#8e44ad,stroke:#6c3483,color:#ecf0f1
-    style A_WebRTC fill:#e67e22,stroke:#d35400,color:#ecf0f1
+    style A_Key fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:2px
+    style A_Messenger fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
+    style A_Encrypt fill:#ff00ff66,stroke:#ff00ff,color:#000,stroke-width:2px
+    style A_WebRTC fill:#ffaa0066,stroke:#ffaa00,color:#000,stroke-width:2px
 
-    style B_Key fill:#27ae60,stroke:#229954,color:#ecf0f1
-    style B_Messenger fill:#3498db,stroke:#2980b9,color:#ecf0f1
-    style B_Encrypt fill:#8e44ad,stroke:#6c3483,color:#ecf0f1
-    style B_WebRTC fill:#e67e22,stroke:#d35400,color:#ecf0f1
+    style B_Key fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:2px
+    style B_Messenger fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
+    style B_Encrypt fill:#ff00ff66,stroke:#ff00ff,color:#000,stroke-width:2px
+    style B_WebRTC fill:#ffaa0066,stroke:#ffaa00,color:#000,stroke-width:2px
 
-    style Tracker fill:#c0392b,stroke:#a93226,color:#ecf0f1
-    style STUN fill:#f39c12,stroke:#d68910,color:#ecf0f1
-    style QR fill:#16a085,stroke:#138d75,color:#ecf0f1
+    style Tracker fill:#ff000066,stroke:#ff0000,color:#000,stroke-width:2px
+    style STUN fill:#ffff0066,stroke:#ffff00,color:#000,stroke-width:2px
+    style QR fill:#00ffff66,stroke:#00ffff,color:#000,stroke-width:2px
 ```
 
 ---
