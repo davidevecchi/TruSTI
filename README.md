@@ -60,7 +60,7 @@ sequenceDiagram
     A->>B: ICE connectivity checks
     B->>A: ICE connectivity checks
 
-    A<->>B: WebRTC DataChannel (direct P2P)
+    Note over A,B: WebRTC DataChannel established<br/>(direct P2P)
 
     A->>Tracker: announce(perm_room)<br/>sha256(sort(A_pk+B_pk))
     B->>Tracker: announce(perm_room)<br/>sha256(sort(A_pk+B_pk))
