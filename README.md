@@ -6,58 +6,70 @@ A privacy-first Android app for sharing STI test results with trusted contacts. 
 
 ```mermaid
 graph TB
-    subgraph Device_A["Device A"]
-        A_Key["EC P-256 Key<br/>(A_pub, A_priv)"]
-        A_Store["SharedPrefs:<br/>Contacts, Tests"]
-        A_Messenger["P2PMessenger"]
-        A_Encrypt["Encryption<br/>ECDH+AES"]
-        A_WebRTC["WebRTC DataChannel"]
+    QR["🔳 QR Code<br/>trusti://peer?pk=B_pub"]
+
+    subgraph DevA["Device A"]
+        A_Key["🔑 EC P-256 Key<br/>A_pub, A_priv"]
+        A_Store["💾 SharedPrefs<br/>Contacts, Tests"]
+        A_Messenger["📨 P2PMessenger"]
+        A_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
+        A_WebRTC["📡 WebRTC DataChannel"]
     end
 
-    subgraph Device_B["Device B"]
-        B_Key["EC P-256 Key<br/>(B_pub, B_priv)"]
-        B_Store["SharedPrefs:<br/>Contacts, Tests"]
-        B_Messenger["P2PMessenger"]
-        B_Encrypt["Encryption<br/>ECDH+AES"]
-        B_WebRTC["WebRTC DataChannel"]
+    subgraph Infra["Infrastructure"]
+        Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com"]
+        STUN["🧭 STUN/TURN<br/>stun.l.google.com"]
     end
 
-    QR["QR Code<br/>trusti://peer?pk=B_pub"]
-    Tracker["WebTorrent Tracker<br/>wss://tracker.ow.com<br/>(routing only)"]
-    STUN["Google STUN<br/>ICE Candidates"]
+    subgraph DevB["Device B"]
+        B_Key["🔑 EC P-256 Key<br/>B_pub, B_priv"]
+        B_Store["💾 SharedPrefs<br/>Contacts, Tests"]
+        B_Messenger["📨 P2PMessenger"]
+        B_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
+        B_WebRTC["📡 WebRTC DataChannel"]
+    end
 
     QR -->|Scan| A_Key
+
     A_Key --> A_Messenger
     B_Key --> B_Messenger
 
-    A_Messenger -->|Signaling| Tracker
-    B_Messenger -->|Signaling| Tracker
-    Tracker -->|Routing| A_Messenger
-    Tracker -->|Routing| B_Messenger
-
-    A_Messenger --> A_WebRTC
-    B_Messenger --> B_WebRTC
-
-    A_WebRTC -->|P2P| B_WebRTC
-    B_WebRTC -->|P2P| A_WebRTC
+    A_Store -.->|Load/Save| A_Messenger
+    B_Store -.->|Load/Save| B_Messenger
 
     A_Messenger -->|Plaintext| A_Encrypt
-    A_Encrypt -->|Ciphertext| A_WebRTC
-
     B_Messenger -->|Plaintext| B_Encrypt
+
+    A_Encrypt -->|Ciphertext| A_WebRTC
     B_Encrypt -->|Ciphertext| B_WebRTC
 
-    A_WebRTC -.->|ICE| STUN
-    B_WebRTC -.->|ICE| STUN
+    A_WebRTC -->|SDP Offer/Answer| Tracker
+    B_WebRTC -->|SDP Offer/Answer| Tracker
+    Tracker -->|Route| A_WebRTC
+    Tracker -->|Route| B_WebRTC
 
-    A_Store -.-> A_Messenger
-    B_Store -.-> B_Messenger
+    A_WebRTC -.->|ICE Candidates| STUN
+    B_WebRTC -.->|ICE Candidates| STUN
 
-    style Tracker fill:#fff3cd
-    style STUN fill:#f8d7da
-    style A_Encrypt fill:#d1ecf1
-    style B_Encrypt fill:#d1ecf1
-    style QR fill:#d4edda
+    A_WebRTC <-->|P2P Encrypted<br/>Messages| B_WebRTC
+
+    style DevA fill:#2c3e50,stroke:#3498db,color:#ecf0f1,stroke-width:2px
+    style DevB fill:#2c3e50,stroke:#3498db,color:#ecf0f1,stroke-width:2px
+    style Infra fill:#34495e,stroke:#e74c3c,color:#ecf0f1,stroke-width:2px
+
+    style A_Key fill:#27ae60,stroke:#229954,color:#ecf0f1
+    style A_Messenger fill:#3498db,stroke:#2980b9,color:#ecf0f1
+    style A_Encrypt fill:#8e44ad,stroke:#6c3483,color:#ecf0f1
+    style A_WebRTC fill:#e67e22,stroke:#d35400,color:#ecf0f1
+
+    style B_Key fill:#27ae60,stroke:#229954,color:#ecf0f1
+    style B_Messenger fill:#3498db,stroke:#2980b9,color:#ecf0f1
+    style B_Encrypt fill:#8e44ad,stroke:#6c3483,color:#ecf0f1
+    style B_WebRTC fill:#e67e22,stroke:#d35400,color:#ecf0f1
+
+    style Tracker fill:#c0392b,stroke:#a93226,color:#ecf0f1
+    style STUN fill:#f39c12,stroke:#d68910,color:#ecf0f1
+    style QR fill:#16a085,stroke:#138d75,color:#ecf0f1
 ```
 
 ---
