@@ -37,6 +37,7 @@ On startup, the app announces itself in its own handshake room and in a permanen
 
 #### First-Time Connection Flow (A scans B's QR)
 
+<!-- DIAGRAM: first_connection -->
 ```mermaid
 sequenceDiagram
     participant A as A Device<br/>(WebRTC)
@@ -71,6 +72,7 @@ sequenceDiagram
 
 #### Reconnection Flow (both peers have each other saved)
 
+<!-- DIAGRAM: reconnection -->
 ```mermaid
 sequenceDiagram
     participant A as A Device<br/>(WebRTC)
@@ -104,6 +106,7 @@ sequenceDiagram
 
 #### Signaling Message Flow (summary)
 
+<!-- DIAGRAM: signaling_summary -->
 ```mermaid
 sequenceDiagram
     participant A as A (offerer)
@@ -264,17 +267,19 @@ app/src/main/java/com/davv/trusti/
 
 ## Diagrams
 
-The README includes Mermaid sequence diagrams that are rendered natively on GitHub. To generate PNG files of these diagrams:
+The README includes Mermaid sequence diagrams marked with `<!-- DIAGRAM: id -->` comments. To render them as PNG files:
 
 ```bash
 # Install mermaid-cli (one-time)
 npm install -g @mermaid-js/mermaid-cli
 
-# Generate PNGs
+# Generate PNGs from marked diagrams
 python3 diagram.py
 ```
 
-PNG files will be saved to the `diagrams/` directory and can be embedded in documentation or presentations.
+The script scans README.md for diagram markers, renders each diagram, and saves PNG files to the `diagrams/` directory. These can be embedded in presentations or exported documentation.
+
+**Note:** GitHub natively renders Mermaid in markdown code blocks, so the diagrams are already visible in the README without running this script.
 
 ---
 
