@@ -245,6 +245,10 @@ sequenceDiagram
 
 **Key point:** ICE candidates are bundled in the SDP (vanilla ICE), not trickled separately—required because the tracker only understands announce/answer messages.
 
+**Answer routing:** B sends answer back on the **same room** where the offer came from:
+- First-time (handshake): Offer → sha256(B_pub), Answer → sha256(B_pub)
+- Reconnect (permanent): Offer → sha256(A_pub ∥ B_pub), Answer → sha256(A_pub ∥ B_pub)
+
 **After bonding:** Both peers derive and announce in the permanent room. Reconnects happen without QR scanning.
 
 #### Reconnection Flow (both peers have each other saved)
@@ -408,15 +412,39 @@ wire format → [parse ephemeral_pub, IV, ciphertext]
 
 ### 5. Message Types
 
-All messages are JSON (then encrypted). Three types:
+All messages are JSON (then encrypted). Sent over the DataChannel after bonding is complete.
 
-| Type | Payload | Purpose |
-| --- | --- | --- |
-| `text` | `{from, content, ts}` | Chat message |
-| `status_request` | `{from}` | Ask peer: do you have a positive test? |
-| `status_response` | `{from, hasPositive, queuedAt?}` | Reply: yes/no + delivery timestamp |
+#### User-Facing Messages
 
-**Status Delivery:** If B is offline when A sends a status update, A stores it in `PendingStatusStore`. When B reconnects, the status is delivered atomically (read-once, then sent). Only the latest status per contact is kept—no backlog.
+| Type | Payload | Purpose | Direction |
+| --- | --- | --- | --- |
+| `text` | `{from, content, ts}` | Chat message | Bidirectional |
+| `sreq` | `{"t": "sreq"}` | **Status Request:** "What's your latest test result?" | A → B |
+| `srsp` | `{"t": "srsp", "pos": boolean}` | **Status Response:** "I have/don't have a positive test" | B → A |
+
+**Example flow:**
+1. A opens contact → sends `sreq`
+2. B receives `sreq` → reads `TestsStore` (current test results)
+3. B sends `srsp` with boolean flag indicating positive test
+4. A receives `srsp` → updates UI with B's current status
+5. If B is offline, A queues the update in `PendingStatusStore` (expires after 7 days)
+
+#### Internal Protocol Messages (Bonding & Lifecycle)
+
+| Type | Payload | Purpose | When |
+| --- | --- | --- | --- |
+| `acc` | `{"t": "acc"}` | **Accept:** B approves the bond, contact is now saved | B sends when user taps "Accept" |
+| `rej` | `{"t": "rej"}` | **Reject:** B declines the bond request, A should stop retrying | B sends when user taps "Decline" |
+| `bye` | `{"t": "bye"}` | **Goodbye:** Peer is removing the bond, please delete me too | Either side sends when removing contact |
+
+**Bond lifecycle:**
+1. A scans QR → creates offer (no message yet—offer via tracker)
+2. B receives offer → shows dialog
+3. B user accepts → B sends `acc` → A receives `acc` → A saves contact
+4. (Alternatively) B user declines → B sends `rej` → A stops retrying, bond fails
+5. Later, user removes contact → sends `bye` → peer deletes bond too
+
+**Key insight:** `acc`/`rej`/`bye` are internal protocol messages that happen AFTER the DataChannel is open, unlike the SDP offer/answer which travel through the tracker during handshake.
 
 ---
 
@@ -567,6 +595,266 @@ sequenceDiagram
 | **Forward secrecy** | Ephemeral key per message—past intercepts unreadable even if long-term key stolen |
 | **Authenticated encryption** | AES-GCM tag; tampering detected immediately (fail-safe) |
 | **Contact privacy** | Different room per pair; tracker can't link contacts together |
+
+---
+
+## Common Usage Flows
+
+### Flow 1: A Scans B's QR Code
+
+```
+A: Opens app → sees QR code camera
+B: Displays own QR code
+
+A: Points camera at B's QR → taps "Scan"
+   ↓ (behind the scenes)
+   A extracts B's public key
+   A clears any stale session cache for this peer
+   A sends WebRTC offer to B's personal room (retries every 5s)
+   ↓
+B: Receives A's offer (from tracker)
+   B shows dialog: "Alice wants to connect. Accept? [Y/N]"
+   ↓
+A: If B accepts
+   ↓ (hidden to user)
+   B receives A's offer → creates answer → sends back via tracker
+   A receives B's answer → DataChannel opens
+   B sends "acc" message over encrypted channel
+   A receives "acc" → saves B as contact permanently
+   ↓
+A and B: Connected ✓ Can now see each other's status
+          (Send/receive test result status updates)
+
+B: If B declines
+   ↓ (hidden to user)
+   B sends "rej" message
+   A receives "rej" → stops retrying offer
+   ↓
+A and B: Not connected, bond rejected (can retry by scanning again)
+```
+
+### Flow 2: A Checks B's Test Status
+
+```
+A: Opens B's contact in app
+   P2PMessenger sends "sreq" (status request)
+   ↓
+B: (if online)
+   Receives "sreq"
+   Reads local test results from disk
+   Sends "srsp" with current positive/negative flag
+   ↓
+A: Receives "srsp" → updates UI showing B's status
+
+B: (if offline)
+   ↓
+A: No response, so A queues the request in PendingStatusStore
+   ↓
+B: Comes back online → reconnects via permanent room
+   ↓
+A: Detects B is online → delivers queued status atomically
+```
+
+### Flow 3: A Removes B from Contacts
+
+```
+A: Opens contacts list → long-press on B → Delete
+   ↓ (behind the scenes)
+   A sends "bye" message to B (if connected)
+   A clears entire session cache for B
+   A removes from permanent room
+   A deletes B from disk (ContactStore)
+   ↓
+B: (if online)
+   Receives "bye" message
+   B also deletes A from disk
+   B removes from permanent room
+   ↓
+A and B: Bond is completely dissolved
+          (if they want to reconnect, must scan QR again)
+```
+
+### Flow 4: Reconnection After App Restart
+
+```
+A: Kills app
+   (All session cache wiped—transports, pending offers, etc.)
+
+A: Opens app again
+   ↓ (behind the scenes)
+   App loads all saved contacts from disk
+   Connects to tracker
+   Announces in permanent room for each saved contact
+   ↓
+B: (also reopened app at the same time)
+   Loads saved contacts
+   Connects to tracker
+   Announces in permanent room
+   ↓
+Tracker: Sees both A and B announcing in the same room
+   ↓
+A: (whoever initiates first based on lexicographic order of keys)
+   Creates offer using permanent room
+   Sends offer to tracker
+   ↓
+B: Receives offer → creates answer (no dialog this time—already saved)
+   Sends answer via tracker
+   ↓
+A and B: DataChannel opens → immediately start syncing latest status
+```
+
+---
+
+## Public API
+
+### P2PMessenger (Main Singleton)
+
+The `P2PMessenger` singleton orchestrates all peer-to-peer communication. Access via:
+```kotlin
+val messenger = P2PMessenger.get(context)
+```
+
+#### Key Functions
+
+**`initialize()`**
+- Initializes the messenger on app startup
+- Loads your EC P-256 key pair (or generates it on first launch)
+- Connects to WebTorrent tracker
+- Loads saved contacts and rejoins permanent rooms
+- Starts listening for incoming QR scans
+```kotlin
+// Call once on app launch
+P2PMessenger.get(context).initialize()
+```
+
+**`startHandshake(contact: Contact)`**
+- Called when user scans a QR code to add a new contact
+- Stores contact in session cache (not persistent yet—pending B's approval)
+- Clears any stale session state from previous attempts with this contact
+- Creates and sends a WebRTC offer to B's personal room
+- Retries offering every 5 seconds until B responds or user cancels
+```kotlin
+// User scanned QR → Device A initiates handshake
+val contact = Contact(name = "Alice", publicKey = qrPublicKey)
+messenger.startHandshake(contact)
+```
+
+**`approveIncomingRequest(contactPk: String)`**
+- Called when B user taps "Accept" on the incoming request dialog
+- Saves the contact permanently to device storage (ContactStore)
+- Sends "acc" message to A once DataChannel is open
+- Requests A's status (sends sreq message)
+- Joins permanent room for future reconnections
+```kotlin
+// B user taps Accept on incoming request dialog
+messenger.approveIncomingRequest(contactPublicKey)
+```
+
+**`rejectIncomingRequest(contactPk: String)`**
+- Called when B user taps "Decline" on the incoming request dialog
+- Sends "rej" message to A so A stops retrying
+- Closes transport and clears all session cache for this contact
+- Contact is never saved—the bond is rejected entirely
+```kotlin
+// B user taps Decline on incoming request dialog
+messenger.rejectIncomingRequest(contactPublicKey)
+```
+
+**`closeContact(contactPk: String)`**
+- Called when user removes a contact from their contact list
+- Sends "bye" message to peer
+- Clears all session cache (transport, pending offers, etc.)
+- Removes from permanent room tracking
+- Deletes pending queued status updates
+```kotlin
+// User taps Delete on contact in contacts list
+messenger.closeContact(contactPublicKey)
+```
+
+**`peerEventFlow: SharedFlow<PeerEvent>`**
+- Collect incoming events from peers (UI subscribes to this)
+- Emitted events:
+  - `ChannelOpened(contact, isNew)` → DataChannel is ready, can send/receive
+  - `ChannelClosed(contact)` → Connection dropped
+  - `IncomingRequest(contactPk, username, disambiguation)` → B received A's offer, show dialog
+  - `StatusResponse(contactPk, hasPositive)` → Received test status from peer
+  - `RequestRejected(contactPk)` → B declined the handshake attempt
+  - `BondRemoved(contactPk)` → Peer sent "bye" message
+```kotlin
+// UI collects events to show dialogs and update UI
+messenger.peerEventFlow.collect { event ->
+    when (event) {
+        is IncomingRequest -> showAcceptDeclineDialog(event.contactPk, event.username)
+        is ChannelOpened -> updateContactStatus(event.contact, online = true)
+        is ChannelClosed -> updateContactStatus(event.contact, online = false)
+        // ... handle other events
+    }
+}
+```
+
+### Encryption
+
+**`Encryption.encrypt(plaintext: ByteArray, recipientPublicKey: ByteArray): ByteArray`**
+- Encrypts plaintext for a specific recipient
+- Generates ephemeral EC P-256 key pair, performs ECDH with recipient's public key
+- Derives 256-bit AES key via HKDF-SHA256
+- Generates random 12-byte nonce, encrypts with AES-256-GCM
+- Returns packed format: `[2-byte keyLen][ephemKey][nonce][ciphertext+tag]`
+- Each message gets a fresh ephemeral key (forward secrecy)
+
+**`Encryption.decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray`**
+- Decrypts ciphertext using recipient's private key
+- Parses wire format to extract ephemeral public key, nonce, and ciphertext
+- Performs ECDH with ephemeral public key to recover shared secret
+- Derives same AES-256 key via HKDF-SHA256
+- Decrypts and verifies GCM auth tag
+- Throws `DecryptionException` if format is invalid or tag verification fails
+
+### WebRtcTransport
+
+**`createOffer()`**
+- Initiator (A) side: creates WebRTC offer
+- Gathers ICE candidates (vanilla ICE—all bundled in SDP)
+- Sets local description and waits for ICE gathering to complete
+- Once complete, invokes `onGatheringComplete` callback to send offer via tracker
+
+**`handleOffer(sdp: String, offerId: String, fromPeerId: String)`**
+- Answerer (B) side: receives offer from tracker
+- Sets remote description (A's offer with ICE candidates)
+- Creates answer, sets local description
+- Waits for ICE gathering, then invokes `onGatheringComplete` to send answer via tracker
+
+**`handleAnswer(sdp: String)`**
+- Initiator (A) side: receives answer from tracker
+- Sets remote description (B's answer)
+- ICE connectivity checks begin, DataChannel opens once connection succeeds
+
+### TorrentSignaling
+
+**`announce(roomId: String)`**
+- Join a room (listen for incoming offers)
+- Used by answerer (B) on personal room, or both peers on permanent room
+
+**`announceWithOffer(roomId, offerId, sdp, myPk, sig, myUsername, myDisambig)`**
+- Send offer into a room
+- Used by initiator (A) to send offer to B's personal room or permanent room
+
+**`sendAnswer(roomId, toPeerId, offerId, sdp)`**
+- Send answer back to offerer
+- Used by answerer (B) to respond to A's offer
+
+### ContactStore & TestsStore
+
+**`ContactStore.save(ctx, contact: Contact)`**
+- Persist a contact to SharedPreferences (JSON list)
+- Called after B approves or A receives "acc"
+
+**`ContactStore.load(ctx): List<Contact>`**
+- Load all saved contacts from SharedPreferences on app startup
+
+**`TestsStore.load(ctx): List<MedicalRecord>`**
+- Load all saved medical test records
+- Used when computing hasPositive flag for status responses
 
 ---
 
