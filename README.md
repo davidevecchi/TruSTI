@@ -598,6 +598,150 @@ sequenceDiagram
 
 ---
 
+## Security & Privacy Issues
+
+This section documents known security and privacy issues, their severity, and planned mitigations. These are intentionally transparent trade-offs rather than hidden bugs.
+
+### 1. Private Keys in SharedPreferences ⚠️ **HIGH SEVERITY**
+
+**Issue:**
+EC P-256 private keys are generated at runtime and persisted as JSON strings in Android `SharedPreferences`. On a non-encrypted device or with root access, any process can read the raw SharedPreferences database file (`/data/data/com.davv.trusti/shared_prefs/trusti_keys.xml`) and extract the private key in plaintext.
+
+**Impact:**
+- Complete compromise of the user's identity and all past messages if device is stolen
+- No hardware security module protection
+- Forward secrecy does not protect past messages if the device is compromised *after* the fact
+
+**Current Status:**
+Keys are stored in `crypto/KeyManager.kt` as DER-encoded strings. This is safe enough for the MVP but must be upgraded for production.
+
+**Mitigation:**
+Use Android `KeyStore` (available on API 23+, minSdk is 26):
+- Generate and store private keys in the OS-level KeyStore (hardware-backed on API 30+)
+- Private keys never leave the Keystore; sign/ECDH operations happen inside the Keystore
+- Only public keys are readable from SharedPreferences
+- Implementation: Refactor `KeyManager` to use `KeyPairGenerator` with `AndroidKeyStore` provider
+- Timeline: Required before production release
+
+**Affected Files:**
+- `crypto/KeyManager.kt` (generate/load logic)
+- `smp/Encryption.kt` (ECDH, decrypt)
+- `smp/WebRtcTransport.kt` (SDP signing—see issue #2)
+
+---
+
+### 2. Unauthenticated SDP Identity Attributes ⚠️ **HIGH SEVERITY**
+
+**Issue:**
+During the handshake, A sends an offer with `x-trusti-pk` and `x-trusti-name` SDP attributes (plus optional name + disambiguation). These attributes are **not signed or authenticated**. A malicious tracker operator (or MITM at the tracker layer) can rewrite these attributes to impersonate a different peer.
+
+**Attack scenario:**
+1. A scans a QR code displaying B's public key
+2. A sends an offer to B's personal room with A's identity in SDP attributes
+3. Attacker intercepts the offer at the tracker and replaces `x-trusti-pk` with Attacker's key
+4. B receives the offer and sees "Attacker" is calling, not "A"
+5. B user accepts the bond thinking they are bonding with A, but they are bonded with Attacker
+
+**Current Status:**
+No SDP signing is implemented. After the DataChannel opens and `acc`/`rej` messages flow, the identity is implicitly confirmed (because B knows who they accepted), but during the initial handshake there is a brief window of vulnerability.
+
+**Mitigation:**
+Sign the SDP offer (or at minimum, the public key + a nonce) with A's private key, so B can verify using the scanned A_pub:
+- A computes a signature over `sha256(offer SDP)` using private key
+- A includes the signature in an SDP attribute: `a=x-trusti-sig:<BASE64_SIG>`
+- B receives offer, verifies signature using the scanned public key
+- If signature fails, reject the offer and warn the user
+- Implementation: Add signature generation in `WebRtcTransport.createOffer()`, verification in `WebRtcTransport.handleOffer()`, requires private key signing capability (see issue #1)
+- Timeline: Required before production release
+
+**Affected Files:**
+- `smp/WebRtcTransport.kt` (createOffer, handleOffer)
+- `crypto/KeyManager.kt` (signing capability)
+
+---
+
+### 3. QR Code Exchange Lacks TOFU / Display Verification ⚠️ **MEDIUM SEVERITY**
+
+**Issue:**
+The QR code itself contains only B's public key. There is no verification step after scanning to ensure that:
+1. The scanned QR was actually displayed by B (not intercepted via shoulder-surfing or screenshot)
+2. The person showing the QR is actually the person you think they are (no identity binding)
+
+**Attack scenario:**
+1. Attacker shoulder-surfs and records B's QR code
+2. Attacker scans the QR with their own device, bonding as "B" from Attacker's perspective
+3. Attacker then presents themselves to Alice as "Bob" in person, but the QR bonds with the Attacker's device instead
+
+**Current Status:**
+No out-of-band verification (e.g., short safety numbers) is implemented. After bonding and messaging, users will naturally verify identities through conversation, but the initial handshake has no anti-phishing step.
+
+**Mitigation (Post-MVP):**
+Implement TOFU (Trust On First Use) with display verification:
+- After scanning QR and receiving the offer, show a **short safety number** (e.g., first 6 chars of `sha256(sorted(A_pub || B_pub))` in hex)
+- Display the same safety number on both devices during the handshake
+- User reads the safety number aloud or confirms visually before accepting
+- This prevents MITM attacks and ties the QR scan to a specific physical interaction
+- Implementation: Add UI dialog during `IncomingRequest` to display safety number
+- Timeline: Post-MVP (good-to-have for security, not blocking initial release)
+
+---
+
+### 4. No Key Rotation or Bond Revocation Mechanism ⚠️ **MEDIUM SEVERITY**
+
+**Issue:**
+- If a device is lost, compromised, or the user's key is accidentally exposed, there is no documented mechanism to rotate keys or revoke bonds
+- All contacts remain bonded with the compromised key
+- Users cannot remotely revoke access to their health data from a lost device
+- The old device retains all contact data and can continue sending messages as the compromised identity
+
+**Current Status:**
+No key rotation or revocation is implemented. The only option is to delete the app and start over with a new device, manually re-scanning QR codes with all contacts.
+
+**Mitigation (Post-MVP):**
+Implement key rotation and optional bond revocation:
+- **Key rotation:** User can initiate "rotate keys" → generates new key pair → stores in KeyStore → sends "key_rotation" message to all bonded contacts → all contacts update the stored public key
+- **Bond revocation:** Contacts can send "revoke_bond" to all bonded peers to explicitly deny access from a specific public key
+- Implementation: Add new message types in P2PMessenger, update ContactStore to version the public key
+- Timeline: Recommended before any public release
+
+---
+
+### 5. WebTorrent Tracker Dependency with No Fallback ⚠️ **LOW SEVERITY (SPECULATIVE)**
+
+**Issue:**
+The app relies on a single public WebTorrent tracker (`wss://tracker.openwebtorrent.com`) for signaling. If the tracker is down, offline, or censored:
+- New handshakes cannot complete (no signaling channel)
+- Existing contacts cannot reconnect
+- The entire app becomes non-functional
+
+While the tracker is generally reliable, depending on third-party infrastructure you do not control introduces a single point of failure for a privacy app.
+
+**Current Status:**
+The tracker is hardcoded in `smp/TorrentSignaling.kt`. There is no fallback mechanism, mirror, or self-hosted option.
+
+**Mitigation (Post-MVP):**
+Implement tracker resilience:
+- **Multiple tracker support:** Allow connecting to multiple trackers (redundancy)
+- **Self-hosted option:** Publish documentation for self-hosting a WebTorrent tracker; allow config override in app settings
+- **Direct IP fallback:** For already-bonded contacts, attempt direct TCP connection to the peer's last-known IP (requires storing IP history)
+- **Local network fallback:** If on the same local network, use mDNS or BLE discovery without tracker
+- Implementation: Parameterize tracker URL, add tracker failover logic, optional IP backup discovery
+- Timeline: Post-MVP (good for robustness, not blocking initial release)
+
+---
+
+## Summary Table
+
+| Issue | Severity | Category | Mitigation | Timeline |
+| --- | --- | --- | --- | --- |
+| Private keys in SharedPreferences | HIGH | Storage | Use Android KeyStore | Required before production |
+| Unauthenticated SDP identity | HIGH | Handshake | Sign SDP with private key | Required before production |
+| QR lacks TOFU verification | MEDIUM | Phishing | Add safety number verification | Post-MVP (good-to-have) |
+| No key rotation / revocation | MEDIUM | Recovery | Implement key rotation message | Post-MVP (recommended) |
+| Single tracker dependency | LOW | Reliability | Multi-tracker + self-hosted option | Post-MVP (robustness) |
+
+---
+
 ## Common Usage Flows
 
 ### Flow 1: A Scans B's QR Code
@@ -885,6 +1029,21 @@ app/src/main/java/com/davv/trusti/
     ├── CommonComponents.kt
     ├── DiseaseTestResult.kt   Disease row with +/−/? chips
     └── DiseaseTestList.kt     List of diseases with results
+```
+
+---
+
+## User Features
+
+### QR Code Display
+- **Tap the QR code** to see its contents and explanation
+- Shows your public key, username, and disambiguation
+- Copy button to share the QR URI via text/email
+- Explains what each field does and how bonding works
+
+The QR code contains (in URI format):
+```
+trusti://peer?pk=<BASE64URL_PUBKEY>&u=<USERNAME>&d=<DISAMBIGUATION>
 ```
 
 ---
