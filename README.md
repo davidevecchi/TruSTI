@@ -597,6 +597,232 @@ sequenceDiagram
 
 ---
 
+## Error Handling & Recovery
+
+**Tracker Disconnect (Mid-Session)**
+
+| Scenario | Behavior | Recovery |
+| --- | --- | --- |
+| **Tracker unreachable on startup** | Emit `TrackerError` event, do not block app initialization | Retry with exponential backoff (1s, 2s, 4s, 8s, max 60s); failover to secondary tracker if configured |
+| **Tracker drops mid-session** | All pending offers marked stale; WebSocket reconnect triggered | Reannounce in rooms on reconnect; resend pending offers with new IDs; clear `pendingOffers` map on 60s timeout |
+| **Tracker timeout (>30s without pong)** | Close WebSocket, treat as disconnect | Immediate failover to secondary tracker; do not wait for exponential backoff |
+
+**ICE Candidate Gathering Failure**
+
+| Scenario | Behavior | Recovery |
+| --- | --- | --- |
+| **STUN/TURN unreachable** | No host candidates; only relay candidates gathered | Attempt to send offer with partial candidates (may still connect via relay); fail after 10s timeout if no candidates at all |
+| **NAT traversal impossible** | ICE checks fail; no P2P connection formed | Emit `IceConnectionFailed` event; keep DataChannel in CONNECTING state for 30s then close; user sees "Cannot reach {contact}" |
+| **ICE candidate timeout** | No candidates gathered after 10s; complete flag set | Send offer/answer with whatever candidates exist; may result in connection failure but do not block indefinitely |
+
+**Message Delivery Race Conditions**
+
+| Scenario | Problem | Resolution |
+| --- | --- | --- |
+| **"acc" lost; A-side saved contact before receiving** | A thinks bond is confirmed, but B never saw "acc" arriving, so B rejects on next interaction | A retries offer automatically (max 6 times, 5s apart); if B still rejects, A receives `RequestRejected` event and clears contact |
+| **DataChannel opens but "acc" not sent yet** | Message buffer fills; "acc" arrives out of order with other messages | Mark "acc" as priority; send before any buffered messages; if DataChannel closes before "acc" arrives, retry on reconnect |
+| **B receives offer, accepts, but DataChannel never opens** | Contact saved on both sides but connection fails; both think they're bonded but can't message | Detect timeout on first message send (>30s); emit `ConnectionFailed` event; user can manually retry or remove and re-add contact |
+
+**Error Event Contract:**
+```kotlin
+sealed class P2PEvent {
+    data class TrackerError(val exception: Exception, val retryCount: Int)
+    data class IceConnectionFailed(val contact: Contact, val reason: String)
+    data class DataChannelError(val contact: Contact, val exception: Exception)
+    data class MessageDeliveryFailed(val contact: Contact, val messageId: String)
+    // ... other events
+}
+```
+
+---
+
+## P2PMessenger State Machine
+
+**Connection Lifecycle States per Peer:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  IDLE (no contact saved)                                        │
+│  • No transport exists                                          │
+│  • No pending state                                             │
+│  • Events: [startHandshake → OFFERING]                          │
+└─────────────────────────────────────────────────────────────────┘
+              ↑
+              │ closeContact()
+              │
+┌─────────────────────────────────────────────────────────────────┐
+│  OFFERING (A: sent offer, waiting for answer)                   │
+│  • pendingOffers[offerId] = contact.pk                          │
+│  • retryJob active (5s interval, max 6 retries)                 │
+│  • Events: [answer → CONNECTING] [rej → IDLE] [timeout → IDLE] │
+└─────────────────────────────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  ANSWERING (B: received offer, waiting for user decision)       │
+│  • handledOffers[contact.pk] = offerId                          │
+│  • pendingApproval.contains(contact.pk)                         │
+│  • Events: [accept → ACCEPTING] [reject → IDLE]                │
+└─────────────────────────────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  ACCEPTING (B: user accepted, sending answer SDP)               │
+│  • transport created & answer sent                              │
+│  • pendingAccepts.contains(contact.pk)                          │
+│  • Events: [DataChannel.onOpen → CONNECTED] [error → IDLE]     │
+└─────────────────────────────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  CONNECTING (both: ICE connectivity checks in progress)         │
+│  • transport.state = CONNECTING                                 │
+│  • No messages sent/received yet                                │
+│  • Timeout: 30s, then fail to IDLE                              │
+│  • Events: [DataChannel.onOpen → CONNECTED] [error → IDLE]     │
+└─────────────────────────────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  CONNECTED (both: DataChannel open, can exchange messages)      │
+│  • transport.state = OPEN                                       │
+│  • isConnected = true (memory-only flag)                        │
+│  • Can send/recv text, sreq, srsp, acc, rej, bye, etc.         │
+│  • Periodic keepalive: every 30s (empty message)                │
+│  • Events: [message → process] [bye → CLOSING] [disconnect → RECONNECTING] │
+└─────────────────────────────────────────────────────────────────┘
+      ↓              ↑
+      │              │ (reconnect within 60s)
+      │ (>60s idle)  │
+┌─────────────────────────────────────────────────────────────────┐
+│  RECONNECTING (peer went offline, auto-retry)                   │
+│  • transport closed but contact still saved                     │
+│  • Announce in permanent room; wait for peer to answer          │
+│  • Retry timeout: 5 min of silence, then give up                │
+│  • Events: [answer → CONNECTING → CONNECTED] [timeout → IDLE]  │
+└─────────────────────────────────────────────────────────────────┘
+              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  CLOSING (peer sent "bye", removing contact)                    │
+│  • Send "bye" message (if transport open)                       │
+│  • Clear transport + pending state                              │
+│  • Remove from permanent room                                   │
+│  • Events: [complete → IDLE]                                    │
+└─────────────────────────────────────────────────────────────────┘
+              ↓ (auto-transition)
+           IDLE
+```
+
+**Activity/Service Lifecycle Integration:**
+
+| Android State | P2PMessenger Behavior |
+| --- | --- |
+| **onCreate()** | initialize() called; loads contacts; connects to tracker; announces in rooms |
+| **onResume()** (app enters foreground) | Resume all pending handshakes; accelerate reconnection retries (1s instead of 5s) |
+| **onPause()** (app goes to background) | No change to active connections; continue announcing in rooms |
+| **Doze/App Standby** | Tracker WebSocket may be killed by OS; on app wake, reconnect triggered; pending messages queued |
+| **onDestroy()** (app killed) | WebSocket closed; all transports closed; session cache wiped; persistent state (contacts, tests) survives |
+
+**Background Restrictions (Android 8+):**
+- App cannot wake itself or access network in background after 15 min idle
+- Incoming peer offers are **not** received if app is background for >1 min
+- **Mitigation:** Use WorkManager to periodically refresh tracker connection every 10 min (if app is backgrounded); re-announce in rooms on app resume
+
+---
+
+## Threading & Concurrency Model
+
+**Thread Ownership:**
+
+| Component | Thread | Ownership | Mutability |
+| --- | --- | --- | --- |
+| `P2PMessenger` singleton | Main + Coroutine IO scope | Single instance, lazy initialized on MainThread | Immutable reference |
+| `peerEventFlow` | Flow consumer (UI, typically Main) | Coroutine scope provided by collector | Collect on UI thread, emit on IO thread |
+| `transports` map | IO scope (WebSocket + ICE) | Accessed from tracker WS callbacks + ICE callbacks | ConcurrentHashMap (thread-safe reads) |
+| `pendingOffers` map | IO scope | Accessed from tracker WS thread on answer arrival | ConcurrentHashMap (atomic operations) |
+| `retryJobs` map | Main (via coroutine scheduler) | Job objects scheduled on DefaultDispatcher | ConcurrentHashMap |
+| WebSocket (`TorrentSignaling`) | IO scope (OkHttp) | Single connection, managed by `TorrentSignaling` | Immutable channel to tracker |
+
+**Coroutine Scope Structure:**
+
+```
+// Global scope (app lifetime)
+object P2PMessenger {
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.IO + Job())
+
+    // Per-contact handshake (store jobs for cancellation)
+    private val retryJobs: Map[String, Job] = ConcurrentHashMap()
+
+    fun startHandshake(contact: Contact) {
+        val job = scope.launch {
+            // Announce offer, retry every 5s up to 6 times
+            repeat(6) {
+                announceOffer()
+                delay(5000)
+            }
+        }
+        retryJobs[contact.pk] = job
+    }
+
+    // Event emission (safe to collect from Main thread)
+    private val _peerEventFlow: Flow[PeerEvent] = MutableSharedFlow()
+    val peerEventFlow: Flow[PeerEvent] = _peerEventFlow.asSharedFlow()
+
+    // Safe cross-thread emission (suspends on backpressure)
+    private suspend fun emit(event: PeerEvent) {
+        _peerEventFlow.emit(event)
+    }
+}
+```
+
+**Race Condition Mitigations:**
+
+| Race | Problem | Solution |
+| --- | --- | --- |
+| **Handshake + app kill** | Pending offer cleared before answer arrives on restart | On startup, reload contacts but don't re-announce; wait 10s for peer answer in permanent room |
+| **Dual offer (A & B both initiate)** | Both send offers simultaneously; duplicate transports | Compare public keys lexicographically; lower PK initiates; higher PK only answers; singleton transport per peer |
+| **Message send + disconnect** | Message queued in DataChannel, channel closes, message lost | Queue messages in memory until `isConnected=true`; retry on reconnect (max 24h expiry) |
+| **Shutdown + pending retry job** | Job tries to access closed WebSocket | Cancel all retryJobs in scope.cancel() before closing WebSocket |
+
+---
+
+## Message Serialization & Wire Format
+
+**JSON Schema (v1):**
+
+All messages exchanged over the encrypted DataChannel are JSON objects with a `t` (type) field:
+
+**Message Types:**
+
+| Type | Required Fields | Example |
+| --- | --- | --- |
+| `text` | `from` (string), `content` (string, max 10k chars), `ts` (unix ms) | `{t:"text", from:"Alice", content:"Hi", ts:1234567890}` |
+| `sreq` | (none) | `{t:"sreq"}` |
+| `srsp` | `pos` (boolean) | `{t:"srsp", pos:true}` |
+| `acc` | (none) | `{t:"acc"}` |
+| `rej` | (none) | `{t:"rej"}` |
+| `bye` | (none) | `{t:"bye"}` |
+| `key_rotation` | `old_pk` (BASE64URL), `new_pk` (BASE64URL), `sig` (BASE64) | `{t:"key_rotation", old_pk:"...", new_pk:"...", sig:"..."}` |
+| `revoke_bond` | `reason` (compromised\|device_lost\|other) | `{t:"revoke_bond", reason:"compromised"}` |
+
+**Wire Format (Encrypted):**
+
+```
+[Encryption header: 2-byte keyLen]
+[DER ephemeral pubkey: keyLen bytes]
+[IV: 12 bytes]
+[JSON payload: variable]
+[GCM tag: 16 bytes]
+```
+
+**Versioning:**
+- No explicit version field; backward compatibility maintained by optional fields only
+- **Future versions:** Add `v: 2` field if incompatible changes needed
+- **Migration:** Old clients reject messages with unknown `t` values; new clients ignore unknown fields
+
+**Size Limits:**
+- Max message size: 65 KB (after encryption)
+- Max text content: 10,000 characters
+- Max pending messages per contact: 1,000 (FIFO drop oldest if exceeded)
+
+---
+
 ## Security & Privacy Issues
 
 This section documents known security and privacy issues, their severity, and planned mitigations. These are intentionally transparent trade-offs rather than hidden bugs.
