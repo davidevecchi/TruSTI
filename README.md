@@ -99,56 +99,41 @@ sequenceDiagram
     participant B as Device B
 
     rect rgba(0, 255, 255, 0.4)
-    Note over B: Display own QR<br/>QR = trusti://peer?pk=B_pub
-    B->>Tracker: Announce in sha256(B_pub)
+        Note over B: Display own QR<br/>QR = trusti://peer?pk=B_pub
+        B ->> Tracker: Announce in sha256(B_pub)
     end
 
     rect rgba(255, 170, 0, 0.4)
-    Note over A: User: Scan B's QR
-    A->>A: Extract B_pub
-    A->>A: startHandshake(contact)<br/>Store in pendingContactByPk
+        Note over A: User: Scan B's QR
+        A ->> A: Extract B_pub
+        A ->> A: startHandshake(contact)<br/>Store in pendingContactByPk
     end
 
-    rect rgba(255, 170, 0, 0.4)
-    Note over A: ⚡ SESSION CACHE<br/>pendingContactByPk[B_pk] = contact
-    Note over A: ⚡ SESSION CACHE<br/>newlyBondedContacts.add(B_pk)
-    end
-
-    A->>Tracker: announce + offer<br/>to sha256(B_pub)
-    Tracker->>B: deliver offer
-
-    rect rgba(255, 170, 0, 0.4)
-    Note over B: ⚡ SESSION CACHE<br/>Create WebRtcTransport<br/>handledOffers[B_pk] = offerId
-    end
-
+    A ->> Tracker: announce + offer<br/>to sha256(B_pub)
+    Tracker ->> B: deliver offer
     Note over B: Emit IncomingRequest event
     Note over B: User sees dialog:<br/>[Accept] [Decline]
 
     alt User taps Accept
         rect rgba(0, 255, 0, 0.4)
-        Note over B: 💾 PERSISTENT<br/>ContactStore.save(ctx, contact)<br/>Contact saved immediately
+            Note over B: 💾 PERSISTENT<br/>ContactStore.save(ctx, contact)<br/>Contact saved immediately
         end
 
-        B->>Tracker: sendAnswer<br/>via permanent room
-
-        rect rgba(255, 170, 0, 0.4)
-        Note over B: ⚡ SESSION CACHE<br/>pendingAccepts.add(B_pk)<br/>or send "acc" if DC open
-        end
-
-        B->>A: Send "acc" (approve message)
+        B ->> Tracker: sendAnswer<br/>via permanent room
+        B ->> A: Send "acc" (approve message)
 
         rect rgba(0, 255, 0, 0.4)
-        Note over A: 💾 PERSISTENT<br/>On "acc" received:<br/>ContactStore.save(ctx, contact)
+            Note over A: 💾 PERSISTENT<br/>On "acc" received:<br/>ContactStore.save(ctx, contact)
         end
 
     else User taps Decline
         rect rgba(255, 0, 0, 0.4)
-        Note over B: Reject handshake
-        Note over B: Send "rej" message
-        Note over B: Close transport
+            Note over B: Reject handshake
+            Note over B: Send "rej" message
+            Note over B: Close transport
         end
 
-        B->>A: Send "rej" (decline message)
+        B ->> A: Send "rej" (decline message)
         Note over A: Stop retrying offer
     end
 ```
