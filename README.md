@@ -96,13 +96,21 @@ trusti://peer?pk=<BASE64URL_PUBKEY>
 sequenceDiagram
     participant A as Device A
     participant B as Device B
+    participant Tracker as WebTorrent Tracker
+
+    rect rgba(0, 255, 255, 0.4)
     Note over B: Display own QR<br/>QR = trusti://peer?pk=B_pub
+    B->>Tracker: Announce in sha256(B_pub)
+    end
+
+    rect rgba(255, 170, 0, 0.4)
     Note over A: Scan B's QR
     A->>A: Extract B_pub
     A->>A: Compute room = sha256(sorted(A_pub + B_pub))
     Note over A: Derive shared room<br/>Store B as contact
-    Note over B: Waiting to be scanned...
-    B->>Tracker: Announce in sha256(B_pub)
+    end
+
+    Note over B: Listening for peer...
     Note over A: Later: scan triggers handshake
 ```
 
@@ -136,7 +144,7 @@ sequenceDiagram
     B->>Tracker: announce ✓ in sha256(B_pub)
     Note over A: Scans QR → gets B_pub
 
-    rect rgb(200,220,255)
+    rect rgba(0, 128, 255, 0.4)
     Note over A,B: ICE Gathering (vanilla)
     A->>ICE_A: gather candidates
     B->>ICE_B: gather candidates
@@ -148,7 +156,7 @@ sequenceDiagram
     B->>Tracker: sendAnswer<br/>SDP with all ICE candidates
     Tracker->>A: deliver answer
 
-    rect rgb(200,255,200)
+    rect rgba(0, 255, 0, 0.4)
     Note over A,B: WebRTC Connectivity
     A->>B: ICE checks (direct P2P)
     B->>A: ICE checks (direct P2P)
@@ -180,18 +188,18 @@ sequenceDiagram
     Tracker->>A: peer list (includes B)
     Tracker->>B: peer list (includes A)
 
-    rect rgb(200,220,255)
+    rect rgba(255, 170, 0, 0.4)
     Note over A: First to initiate<br/>sends offer
     A->>Tracker: announce + offer<br/>SDP + ICE candidates<br/>in perm_room
     Tracker->>B: deliver offer
     end
 
-    rect rgb(200,220,255)
+    rect rgba(255, 170, 0, 0.4)
     B->>Tracker: sendAnswer<br/>SDP + ICE candidates
     Tracker->>A: deliver answer
     end
 
-    rect rgb(200,255,200)
+    rect rgba(0, 255, 0, 0.4)
     Note over A,B: ICE connectivity → DataChannel
     Note over A,B: Ready for encrypted messages
     end
@@ -226,6 +234,7 @@ sequenceDiagram
     participant T as Tracker<br/>(routing only)
     participant B as B (Answerer)
 
+    rect rgba(255, 170, 0, 0.4)
     Note over A,B: Room = sha256(B_pub)
 
     A->>T: announceWithOffer<br/>SDP + ICE candidates<br/>+ identity attrs
@@ -233,8 +242,11 @@ sequenceDiagram
 
     B->>T: sendAnswer<br/>SDP + ICE candidates
     T->>A: [deliver answer]
+    end
 
+    rect rgba(0, 255, 0, 0.4)
     Note over A,B: P2P connection<br/>established
+    end
 ```
 
 **Identity:** Public key + display name in SDP as `a=x-trusti-*` attributes—B knows who called without needing a server.
@@ -262,8 +274,12 @@ graph LR
     A --> P2P
     B --> P2P
 
-    style P2P fill:#90EE90
-    style T fill:#87CEEB
+    style A fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
+    style B fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
+    style SDP1 fill:#ffff0066,stroke:#ffff00,color:#000,stroke-width:2px
+    style SDP2 fill:#ffff0066,stroke:#ffff00,color:#000,stroke-width:2px
+    style T fill:#ff000066,stroke:#ff0000,color:#000,stroke-width:2px
+    style P2P fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:2px
 ```
 
 **NAT Traversal:**
@@ -364,12 +380,12 @@ sequenceDiagram
 
     Tracker-->>Messenger: Connected ✓
 
-    rect rgb(220,240,255)
+    rect rgba(0, 255, 0, 0.4)
     Note over Messenger,Tracker: Announce in personal room
     Messenger->>Tracker: announce<br/>room = sha256(my_pub)
     end
 
-    rect rgb(220,240,255)
+    rect rgba(0, 255, 255, 0.4)
     Note over Messenger,Tracker: Announce in permanent rooms
     Messenger->>Tracker: announce in perm_room<br/>for each saved contact
     end
@@ -411,7 +427,9 @@ sequenceDiagram
     A->>A: Encrypt with B_pub
     A->>T: Send (hashed room + encrypted bytes)
 
+    rect rgba(255, 0, 0, 0.4)
     Note over T: Tracker sees:<br/>✗ Message content<br/>✗ Real identities<br/>✓ Only encrypted blobs<br/>& room hashes
+    end
 
     T->>B: Deliver encrypted bytes
 
