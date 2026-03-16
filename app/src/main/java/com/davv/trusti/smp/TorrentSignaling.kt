@@ -1,10 +1,12 @@
 package com.davv.trusti.smp
 
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -12,194 +14,209 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.SecureRandom
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
-class TorrentSignaling(private val scope: CoroutineScope) {
+/**
+ * WebSocket client for the WebTorrent tracker protocol.
+ *
+ * Supports:
+ *  - announce (with offers) — send SDP offer to a room
+ *  - answer — reply to an offer
+ *  - announcePresence — join a room without offers
+ *
+ * Vanilla ICE: all ICE candidates are bundled in the SDP, so there is no
+ * candidate relay method.
+ */
+class TorrentSignaling(
+    private val trackerUrl: String = "wss://tracker.openwebtorrent.com",
+    private val peerId: String = RoomIds.randomPeerId(),
+    private val onToast: (String) -> Unit = {}
+) {
+    companion object {
+        private const val TAG = "TorrentSignaling"
+    }
 
-    sealed class Event {
+    sealed class Signal {
+        /** Remote peer sent an SDP offer. */
         data class Offer(
-            val peerId: String,
+            val infoHash: String,
+            val fromPeerId: String,
             val offerId: String,
             val sdp: String,
-            val fromPk: String?,
-            val sig: String?,
-            val roomId: String      // which room this offer arrived on
-        ) : Event()
-        data class Answer(val peerId: String, val offerId: String, val sdp: String) : Event()
+            val fromPk: String
+        ) : Signal()
+
+        /** Remote peer answered our offer. */
+        data class Answer(
+            val infoHash: String,
+            val fromPeerId: String,
+            val offerId: String,
+            val sdp: String
+        ) : Signal()
     }
 
-    private val _events = MutableSharedFlow<Event>(extraBufferCapacity = 64)
-    val events: SharedFlow<Event> = _events
+    private val _signals = MutableSharedFlow<Signal>(extraBufferCapacity = 64)
+    val signals = _signals.asSharedFlow()
 
-    @Volatile var isReady = false; private set
+    private val _connected = MutableStateFlow(false)
+    val connected = _connected.asStateFlow()
 
-    var onConnected: (() -> Unit)? = null
-    var onDisconnected: (() -> Unit)? = null
-    var onTrackerError: ((String) -> Unit)? = null
-
-    private val client = OkHttpClient()
     private var ws: WebSocket? = null
+    private val client = OkHttpClient.Builder()
+        .pingInterval(30, TimeUnit.SECONDS)
+        .build()
 
-    // 20-byte random peer identity for this session
-    private val peerId: String = ByteArray(20)
-        .also { SecureRandom().nextBytes(it) }
-        .toString(Charsets.ISO_8859_1)
-
-    // bi-directional mapping: infoHash ↔ roomId
-    private val ihToRoom  = ConcurrentHashMap<String, String>()
-    private val roomToIh  = ConcurrentHashMap<String, String>()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun connect() {
-        Log.d(TAG, "connect → $TRACKER_URL")
-        val req = Request.Builder().url(TRACKER_URL).build()
+        if (ws != null) return
+        Log.d(TAG, "Connecting to $trackerUrl")
+        toast("Tracker: connecting…")
+        val req = Request.Builder().url(trackerUrl).build()
         ws = client.newWebSocket(req, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, r: Response) {
-                Log.d(TAG, "tracker connected")
-                isReady = true
-                onConnected?.invoke()
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.d(TAG, "WS connected to $trackerUrl")
+                toast("Tracker: connected")
+                _connected.value = true
             }
-            override fun onMessage(ws: WebSocket, text: String) = handleMessage(text)
-            override fun onFailure(ws: WebSocket, t: Throwable, r: Response?) {
-                Log.e(TAG, "tracker failure: ${t.message}")
-                isReady = false
-                onTrackerError?.invoke(t.message ?: "tracker error")
-                onDisconnected?.invoke()
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                handleMessage(text)
             }
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "tracker closed code=$code reason=$reason")
-                isReady = false
-                onDisconnected?.invoke()
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                Log.d(TAG, "WS closing: $code $reason")
+                toast("Tracker: closing ($code)")
+                _connected.value = false
             }
-        })
-    }
 
-    /** Listen on a room without sending an offer (answerer side / personal room). */
-    fun announce(roomId: String) {
-        Log.d(TAG, "announce room=${roomId.take(16)}")
-        send(JSONObject().apply {
-            put("action",    "announce")
-            put("info_hash", infoHashFor(roomId))
-            put("peer_id",   peerId)
-            put("numwant",   0)
-        })
-    }
-
-    /** Stop tracking a room (cleanup after disconnect). */
-    fun removeRoom(roomId: String) {
-        roomToIh.remove(roomId)?.let { ih -> ihToRoom.remove(ih) }
-    }
-
-    /** Send an offer into a room (initiator side). */
-    fun announceWithOffer(
-        roomId: String, offerId: String, sdp: String,
-        myPk: String? = null, sig: String? = null
-    ) {
-        Log.d(TAG, "announceWithOffer room=${roomId.take(16)} offerId=${offerId.take(8)}")
-        val offer = JSONObject().apply {
-            put("type", "offer")
-            put("sdp",  sdp)
-            myPk?.let { put("from_pk", it) }
-            sig?.let  { put("sig",     it) }
-        }
-        send(JSONObject().apply {
-            put("action",    "announce")
-            put("info_hash", infoHashFor(roomId))
-            put("peer_id",   peerId)
-            put("numwant",   10)
-            put("offers", JSONArray().put(
-                JSONObject().apply {
-                    put("offer_id", offerId)
-                    put("offer",    offer)
-                }
-            ))
-        })
-    }
-
-    /** Send an answer back to an offeror. */
-    fun sendAnswer(roomId: String, toPeerId: String, offerId: String, sdp: String) {
-        Log.d(TAG, "sendAnswer room=${roomId.take(16)} offerId=${offerId.take(8)}")
-        send(JSONObject().apply {
-            put("action",      "announce")
-            put("info_hash",   infoHashFor(roomId))
-            put("peer_id",     peerId)
-            put("to_peer_id",  toPeerId)
-            put("offer_id",    offerId)
-            put("answer", JSONObject().apply {
-                put("type", "answer")
-                put("sdp",  sdp)
-            })
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(TAG, "WS failure: ${t.message}")
+                toast("Tracker: disconnected")
+                _connected.value = false
+                ws = null
+                // Reconnect after 5s
+                mainHandler.postDelayed({ connect() }, 5000)
+            }
         })
     }
 
     fun disconnect() {
-        isReady = false
         ws?.close(1000, "bye")
         ws = null
+        _connected.value = false
     }
 
-    // --- private ---
-
-    private fun infoHashFor(roomId: String): String =
-        roomToIh.getOrPut(roomId) {
-            // take first 20 bytes of the sha256 hex room ID
-            val bytes = ByteArray(20) { i -> roomId.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-            val ih = bytes.toString(Charsets.ISO_8859_1)
-            ihToRoom[ih] = roomId
-            ih
+    /**
+     * Announce to [infoHash] room with an SDP offer (vanilla ICE — SDP
+     * already contains all ICE candidates).
+     */
+    fun announceWithOffer(infoHash: String, offerId: String, sdp: String, fromPk: String) {
+        val offer = JSONObject().apply {
+            put("type", "offer")
+            put("sdp", sdp)
+            put("from_pk", fromPk)
         }
+        val offersArr = JSONArray().put(JSONObject().apply {
+            put("offer_id", offerId)
+            put("offer", offer)
+        })
+
+        val msg = JSONObject().apply {
+            put("action", "announce")
+            put("info_hash", infoHash)
+            put("peer_id", peerId)
+            put("numwant", 10)
+            put("offers", offersArr)
+        }
+        send(msg)
+        Log.d(TAG, "Announced offer in room ${infoHash.take(8)}… offerId=${offerId.take(8)}")
+        toast("TX offer → room ${infoHash.take(8)}")
+    }
+
+    /** Send an SDP answer back to a specific peer (vanilla ICE). */
+    fun sendAnswer(infoHash: String, toPeerId: String, offerId: String, sdp: String) {
+        val answer = JSONObject().apply {
+            put("type", "answer")
+            put("sdp", sdp)
+        }
+        val msg = JSONObject().apply {
+            put("action", "announce")
+            put("info_hash", infoHash)
+            put("peer_id", peerId)
+            put("to_peer_id", toPeerId)
+            put("offer_id", offerId)
+            put("answer", answer)
+        }
+        send(msg)
+        Log.d(TAG, "Sent answer to $toPeerId in room ${infoHash.take(8)}")
+        toast("TX answer → peer ${toPeerId.take(8)}")
+    }
+
+    /** Re-announce to a room (no offers — just presence). */
+    fun announcePresence(infoHash: String) {
+        val msg = JSONObject().apply {
+            put("action", "announce")
+            put("info_hash", infoHash)
+            put("peer_id", peerId)
+            put("numwant", 0)
+        }
+        send(msg)
+        Log.d(TAG, "Presence in room ${infoHash.take(8)}")
+        toast("Presence → room ${infoHash.take(8)}")
+    }
 
     private fun send(json: JSONObject) {
-        val sent = ws?.send(json.toString()) ?: false
-        if (!sent) Log.w(TAG, "send failed — ws closed?")
+        val socket = ws
+        if (socket == null) {
+            Log.w(TAG, "WS not connected, dropping message")
+            toast("Tracker: not connected!")
+            return
+        }
+        socket.send(json.toString())
     }
 
     private fun handleMessage(text: String) {
-        val obj = runCatching { JSONObject(text) }.getOrNull() ?: run {
-            Log.w(TAG, "unparseable message: ${text.take(120)}")
-            return
-        }
-        val action = obj.optString("action")
-        if (action != "announce") {
-            Log.d(TAG, "tracker msg action=$action (ignored)")
-            return
-        }
+        try {
+            val json = JSONObject(text)
 
-        val ih     = obj.optString("info_hash")
-        val roomId = ihToRoom[ih] ?: ih   // fall back to ih if not registered
-
-        val offerObj = obj.optJSONObject("offer")
-        if (offerObj != null) {
-            val fromPk = offerObj.optString("from_pk").takeIf { it.isNotEmpty() }
-            Log.d(TAG, "← offer  room=${roomId.take(16)} offerId=${obj.optString("offer_id").take(8)} fromPk=${fromPk?.take(8)}")
-            scope.launch {
-                _events.emit(Event.Offer(
-                    peerId  = obj.optString("peer_id"),
-                    offerId = obj.optString("offer_id"),
-                    sdp     = offerObj.optString("sdp"),
-                    fromPk  = offerObj.optString("from_pk").takeIf { it.isNotEmpty() },
-                    sig     = offerObj.optString("sig").takeIf     { it.isNotEmpty() },
-                    roomId  = roomId
-                ))
+            // Offer relayed from another peer
+            if (json.has("offer")) {
+                val infoHash = json.optString("info_hash", "")
+                val fromPeerId = json.optString("peer_id", "")
+                val offerId = json.optString("offer_id", "")
+                val offerObj = json.getJSONObject("offer")
+                val sdp = offerObj.optString("sdp", "")
+                val fromPk = offerObj.optString("from_pk", "")
+                Log.d(TAG, "RX offer from $fromPeerId in room ${infoHash.take(8)}")
+                toast("RX offer ← peer ${fromPeerId.take(8)}")
+                _signals.tryEmit(Signal.Offer(infoHash, fromPeerId, offerId, sdp, fromPk))
+                return
             }
-            return
-        }
 
-        val answerObj = obj.optJSONObject("answer")
-        if (answerObj != null) {
-            Log.d(TAG, "← answer room=${roomId.take(16)} offerId=${obj.optString("offer_id").take(8)}")
-            scope.launch {
-                _events.emit(Event.Answer(
-                    peerId  = obj.optString("peer_id"),
-                    offerId = obj.optString("offer_id"),
-                    sdp     = answerObj.optString("sdp")
-                ))
+            // Answer relayed from another peer
+            if (json.has("answer")) {
+                val infoHash = json.optString("info_hash", "")
+                val fromPeerId = json.optString("peer_id", "")
+                val offerId = json.optString("offer_id", "")
+                val answerObj = json.getJSONObject("answer")
+                val sdp = answerObj.optString("sdp", "")
+                Log.d(TAG, "RX answer from $fromPeerId in room ${infoHash.take(8)}")
+                toast("RX answer ← peer ${fromPeerId.take(8)}")
+                _signals.tryEmit(Signal.Answer(infoHash, fromPeerId, offerId, sdp))
+                return
             }
+
+            // Log any other tracker messages (peer lists, errors, etc.)
+            if (json.has("info_hash")) {
+                Log.d(TAG, "Tracker msg for room ${json.optString("info_hash").take(8)}: ${text.take(100)}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Parse error: ${e.message}")
         }
     }
 
-    companion object {
-        private const val TAG = "TorrentSignaling"
-        private const val TRACKER_URL = "wss://tracker.openwebtorrent.com"
+    private fun toast(msg: String) {
+        mainHandler.post { onToast(msg) }
     }
 }

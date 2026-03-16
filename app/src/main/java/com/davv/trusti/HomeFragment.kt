@@ -2,6 +2,7 @@ package com.davv.trusti
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -16,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.activity.result.contract.ActivityResultContracts
 import com.davv.trusti.connection.QrHelper
 import com.davv.trusti.crypto.KeyManager
 import com.davv.trusti.databinding.FragmentHomeBinding
@@ -26,8 +28,6 @@ import com.davv.trusti.ui.TruSTITheme
 import com.davv.trusti.utils.ContactStore
 import com.davv.trusti.utils.FontExtensions
 import com.davv.trusti.utils.ProfileManager
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 
@@ -40,39 +40,34 @@ class HomeFragment : Fragment() {
     private val showPrivacyDialog = mutableStateOf(false)
     private var dialogComposeView: ComposeView? = null
 
-    private val barcodeLauncher = registerForActivityResult(ScanContract()) { result ->
-        runCatching {
-            val raw = result.contents ?: return@registerForActivityResult
-            Log.d(TAG, "QR scanned: ${raw.take(60)}")
-
-            val info = QrHelper.parse(raw)
-            if (info == null) {
-                Log.w(TAG, "QR parse failed for: $raw")
-                Toast.makeText(requireContext(), "Invalid TruSTI QR code", Toast.LENGTH_SHORT).show()
-                return@registerForActivityResult
+    private val scannerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val pk = result.data?.getStringExtra(ScannerActivity.EXTRA_PUBLIC_KEY)
+            if (pk != null) {
+                handleScannedPublicKey(pk)
             }
-            Log.d(TAG, "QR parsed: pk=${info.publicKey.take(8)}")
-
-            // If already bonded, inform the user instead of re-adding
-            val existing = ContactStore.load(requireContext()).find { it.publicKey == info.publicKey }
-            if (existing != null) {
-                android.app.AlertDialog.Builder(requireContext())
-                    .setTitle(R.string.already_bonded_title)
-                    .setMessage(getString(R.string.already_bonded_message, existing.name))
-                    .setPositiveButton(android.R.string.ok) { _, _ ->
-                        (requireActivity() as? MainActivity)?.navigateToBonds()
-                    }
-                    .show()
-                return@registerForActivityResult
-            }
-
-            // Show PrivacyChoicesDialog
-            pendingContactPk = info.publicKey
-            showPrivacyDialog.value = true
-        }.onFailure { e ->
-            Log.e(TAG, "Crash in scan result handler", e)
-            Toast.makeText(requireContext(), "Scan error: ${e.message}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun handleScannedPublicKey(pk: String) {
+        Log.d(TAG, "QR scanned: pk=${pk.take(8)}")
+
+        // If already bonded, inform the user instead of re-adding
+        val existing = ContactStore.load(requireContext()).find { it.publicKey == pk }
+        if (existing != null) {
+            android.app.AlertDialog.Builder(requireContext())
+                .setTitle(R.string.already_bonded_title)
+                .setMessage(getString(R.string.already_bonded_message, existing.name))
+                .setPositiveButton(android.R.string.ok) { _, _ ->
+                    (requireActivity() as? MainActivity)?.navigateToBonds()
+                }
+                .show()
+            return
+        }
+
+        // Show PrivacyChoicesDialog
+        pendingContactPk = pk
+        showPrivacyDialog.value = true
     }
 
     companion object {
@@ -110,12 +105,7 @@ class HomeFragment : Fragment() {
             .launchIn(viewLifecycleOwner.lifecycleScope)
 
         binding.btnScan.setOnClickListener {
-            barcodeLauncher.launch(ScanOptions().apply {
-                setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                setPrompt("Scan a TruSTI QR code")
-                setBeepEnabled(false)
-                setOrientationLocked(false)
-            })
+            scannerLauncher.launch(Intent(requireContext(), ScannerActivity::class.java))
         }
 
         // Show QR content and explanation when clicked
@@ -132,6 +122,7 @@ class HomeFragment : Fragment() {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 TruSTITheme {
+                    // Directly access the state values to ensure recomposition
                     if (showPrivacyDialog.value && pendingContactPk != null) {
                         PrivacyChoicesDialog(
                             context = requireContext(),
@@ -232,6 +223,10 @@ The QR contains only your public key.
 
     override fun onDestroyView() {
         super.onDestroyView()
+        dialogComposeView?.let {
+            (requireActivity().window.decorView as? android.view.ViewGroup)?.removeView(it)
+        }
+        dialogComposeView = null
         _binding = null
     }
 }

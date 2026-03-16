@@ -2,78 +2,82 @@ package com.davv.trusti.utils
 
 import android.content.Context
 import com.davv.trusti.model.Contact
+import com.davv.trusti.model.DiseaseStatus
+import com.davv.trusti.model.SharingPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
 object ContactStore {
-
     private const val PREFS = "trusti_contacts"
-    private const val KEY = "contacts"
-    private const val MAX_CONTACTS = 50
+    private const val KEY = "contacts_json"
+
+    fun load(context: Context): List<Contact> {
+        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "[]")
+        val arr = JSONArray(raw)
+        return (0 until arr.length()).map { i -> fromJson(arr.getJSONObject(i)) }
+    }
 
     fun save(context: Context, contact: Contact) {
         val list = load(context).toMutableList()
-        list.removeAll { it.publicKey == contact.publicKey }
-        list.add(0, contact)
-        saveList(context, list)
+        val idx = list.indexOfFirst { it.publicKey == contact.publicKey }
+        if (idx >= 0) list[idx] = contact else list.add(contact)
+        persist(context, list)
     }
 
     fun delete(context: Context, publicKey: String) {
-        val list = load(context).toMutableList()
-        list.removeAll { it.publicKey == publicKey }
-        saveList(context, list)
+        persist(context, load(context).filter { it.publicKey != publicKey })
     }
 
-    private fun saveList(context: Context, list: List<Contact>) {
-        val json = JSONArray(list.take(MAX_CONTACTS).map { c ->
-            JSONObject().apply {
-                put("name", c.name)
-                put("publicKey", c.publicKey)
-                put("disambig", c.disambiguation ?: "")
-                c.diseaseStatus?.let { status ->
-                    put("diseaseStatus", JSONObject().apply {
-                        put("positiveCount", status.positiveCount)
-                        put("negativeCount", status.negativeCount)
-                        put("vaccinatedCount", status.vaccinatedCount)
-                        put("takeCareCount", status.takeCareCount)
-                        put("notTestedCount", status.notTestedCount)
-                        put("lastUpdated", status.lastUpdated)
-                    })
-                }
-            }
-        })
+    private fun persist(context: Context, list: List<Contact>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(toJson(it)) }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY, json.toString()).apply()
+            .edit().putString(KEY, arr.toString()).apply()
     }
 
-    fun load(context: Context): List<Contact> {
-        val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { i ->
-                arr.getJSONObject(i).let { obj ->
-                    val diseaseStatus = obj.optJSONObject("diseaseStatus")?.let { status ->
-                        val positiveCount = status.optInt("positiveCount", 0)
-                        com.davv.trusti.model.DiseaseStatus(
-                            positiveCount = positiveCount,
-                            negativeCount = status.optInt("negativeCount", 0),
-                            vaccinatedCount = status.optInt("vaccinatedCount", 0),
-                            takeCareCount = status.optInt("takeCareCount", 0),
-                            notTestedCount = status.optInt("notTestedCount", 0),
-                            lastUpdated = status.optLong("lastUpdated", System.currentTimeMillis()),
-                            hasPositive = positiveCount > 0
-                        )
-                    }
-                    Contact(
-                        name = obj.getString("name"),
-                        publicKey = obj.getString("publicKey"),
-                        disambiguation = obj.optString("disambig").takeIf { it.isNotEmpty() },
-                        isConnected = false, // runtime-only; always false at startup
-                        diseaseStatus = diseaseStatus
-                    )
-                }
-            }
-        } catch (_: Exception) { emptyList() }
+    private fun toJson(c: Contact) = JSONObject().apply {
+        put("name", c.name)
+        put("publicKey", c.publicKey)
+        put("disambiguation", c.disambiguation ?: "")
+        c.diseaseStatus?.let { s ->
+            put("diseaseStatus", JSONObject().apply {
+                put("hasPositive", s.hasPositive)
+                put("lastUpdated", s.lastUpdated)
+            })
+        }
+        c.ourSharingPrefs?.let { p ->
+            put("ourSharingPrefs", sharingToJson(p))
+        }
+        c.theirSharingPrefs?.let { p ->
+            put("theirSharingPrefs", sharingToJson(p))
+        }
     }
+
+    private fun fromJson(o: JSONObject): Contact {
+        val ds = o.optJSONObject("diseaseStatus")?.let {
+            DiseaseStatus(it.optBoolean("hasPositive"), it.optLong("lastUpdated", System.currentTimeMillis()))
+        }
+        return Contact(
+            name = o.optString("name", ""),
+            publicKey = o.getString("publicKey"),
+            disambiguation = o.optString("disambiguation", "").ifEmpty { null },
+            diseaseStatus = ds,
+            ourSharingPrefs = o.optJSONObject("ourSharingPrefs")?.let { sharingFromJson(it) },
+            theirSharingPrefs = o.optJSONObject("theirSharingPrefs")?.let { sharingFromJson(it) }
+        )
+    }
+
+    private fun sharingToJson(p: SharingPreferences) = JSONObject().apply {
+        put("shareCurrentStatus", p.shareCurrentStatus)
+        put("shareHistory", p.shareHistory)
+        put("shareCounter", p.shareCounter)
+        put("shareVaccines", p.shareVaccines)
+    }
+
+    private fun sharingFromJson(o: JSONObject) = SharingPreferences(
+        shareCurrentStatus = o.optBoolean("shareCurrentStatus", true),
+        shareHistory = o.optBoolean("shareHistory", true),
+        shareCounter = o.optBoolean("shareCounter", true),
+        shareVaccines = o.optBoolean("shareVaccines", true)
+    )
 }

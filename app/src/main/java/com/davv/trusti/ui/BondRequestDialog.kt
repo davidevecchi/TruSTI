@@ -42,11 +42,15 @@ fun BondRequestDialog(
     val defaultDisambig = ProfileManager.getDisambiguation(context)
     val defaultShareStatus = ProfileManager.getShareStatus(context)
     val defaultShareHistory = ProfileManager.getShareHistory(context)
+    val defaultShareCounter = ProfileManager.getShareCounter(context)
+    val defaultShareVaccines = ProfileManager.getShareVaccines(context)
 
     var myName by remember { mutableStateOf(defaultName) }
     var myDisambig by remember { mutableStateOf(defaultDisambig) }
     var myShareStatus by remember { mutableStateOf(defaultShareStatus) }
     var myShareHistory by remember { mutableStateOf(defaultShareHistory) }
+    var myShareCounter by remember { mutableStateOf(defaultShareCounter) }
+    var myShareVaccines by remember { mutableStateOf(defaultShareVaccines) }
 
     AlertDialog(
         onDismissRequest = onReject,
@@ -114,6 +118,38 @@ fun BondRequestDialog(
                     )
                     Text(
                         "Health history",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Checkbox(
+                        checked = senderSharingPrefs.shareCounter,
+                        onCheckedChange = {},
+                        enabled = false
+                    )
+                    Text(
+                        "Test count",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Checkbox(
+                        checked = senderSharingPrefs.shareVaccines,
+                        onCheckedChange = {},
+                        enabled = false
+                    )
+                    Text(
+                        "Vaccination status",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -199,6 +235,36 @@ fun BondRequestDialog(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Checkbox(
+                        checked = myShareCounter,
+                        onCheckedChange = { myShareCounter = it }
+                    )
+                    Text(
+                        "Share test count",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Checkbox(
+                        checked = myShareVaccines,
+                        onCheckedChange = { myShareVaccines = it }
+                    )
+                    Text(
+                        "Share vaccination status",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         },
         confirmButton = {
@@ -206,7 +272,9 @@ fun BondRequestDialog(
                 onClick = {
                     val myPrefs = SharingPreferences(
                         shareCurrentStatus = myShareStatus,
-                        shareHistory = myShareHistory
+                        shareHistory = myShareHistory,
+                        shareCounter = myShareCounter,
+                        shareVaccines = myShareVaccines
                     )
                     onAccept(myName, myDisambig, myPrefs)
                 }

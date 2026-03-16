@@ -5,10 +5,12 @@ import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -111,7 +113,11 @@ class MainActivity : AppCompatActivity() {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 TruSTITheme {
+                    Log.d("MainActivity", "=== COMPOSE VIEW UPDATE ===")
+                    Log.d("MainActivity", "showBondRequestDialog.value: ${showBondRequestDialog.value}")
+                    Log.d("MainActivity", "pendingBondRequest != null: ${pendingBondRequest != null}")
                     if (showBondRequestDialog.value && pendingBondRequest != null) {
+                        Log.d("MainActivity", "=== SHOWING BOND REQUEST DIALOG ===")
                         val event = pendingBondRequest!!
                         BondRequestDialog(
                             context = this@MainActivity,
@@ -158,8 +164,14 @@ class MainActivity : AppCompatActivity() {
             }
 
             is P2PMessenger.PeerEvent.IncomingBondRequest -> {
+                Log.d("MainActivity", "=== RECEIVED INCOMING BOND REQUEST ===")
+                Log.d("MainActivity", "contactPk: ${event.contactPk.take(8)}")
+                Log.d("MainActivity", "senderName: ${event.senderName}")
+                Log.d("MainActivity", "senderDisambig: ${event.senderDisambig}")
+                Log.d("MainActivity", "senderSharingPrefs: ${event.senderSharingPrefs}")
                 pendingBondRequest = event
                 showBondRequestDialog.value = true
+                Log.d("MainActivity", "=== BOND REQUEST DIALOG SHOULD SHOW ===")
             }
 
             is P2PMessenger.PeerEvent.ChannelClosed -> {
@@ -191,6 +203,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        dialogComposeView?.let {
+            (window.decorView as? android.view.ViewGroup)?.removeView(it)
+        }
+        dialogComposeView = null
         super.onDestroy()
         if (isFinishing) P2PMessenger.get(this).onDestroy()
     }

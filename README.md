@@ -630,6 +630,7 @@ sealed class P2PEvent {
     data class IceConnectionFailed(val contact: Contact, val reason: String)
     data class DataChannelError(val contact: Contact, val exception: Exception)
     data class MessageDeliveryFailed(val contact: Contact, val messageId: String)
+    data class ContactUnreachable(val contact: Contact)  // Emitted after 5min RECONNECTING timeout
     // ... other events
 }
 ```
@@ -695,7 +696,8 @@ sealed class P2PEvent {
 │  • transport closed but contact still saved                     │
 │  • Announce in permanent room; wait for peer to answer          │
 │  • Retry timeout: 5 min of silence, then give up                │
-│  • Events: [answer → CONNECTING → CONNECTED] [timeout → IDLE]  │
+│  • Events: [answer → CONNECTING → CONNECTED] [timeout → emit   │
+│             ContactUnreachable event, then IDLE]                │
 └─────────────────────────────────────────────────────────────────┘
               ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1402,6 +1404,73 @@ The QR code contains (in URI format):
 ```
 trusti://peer?pk=<BASE64URL_PUBKEY>&u=<USERNAME>&d=<DISAMBIGUATION>
 ```
+
+---
+
+## Implementation Notes & Constraints
+
+### Issue #1: RECONNECTING Silent Gap (RESOLVED via ContactUnreachable event)
+
+**Problem:** After 5 minutes of retry timeout in RECONNECTING state, the connection would transition to IDLE with no user feedback. The contact remains saved but the UI has no way to show it's unreachable.
+
+**Resolution:** Emit `ContactUnreachable(contact)` event when RECONNECTING times out. UI can then:
+- Stop showing a stale "online" badge
+- Display "last seen" time instead
+- Offer user a manual "Retry" button
+
+### Issue #2: pendingContactByPk Session-Only Storage (INTENTIONAL)
+
+**Design:** During OFFERING state, peer A holds the scanned contact in session-only memory (`pendingContactByPk`) until receiving the "acc" approval message.
+
+**Risk:** If A's process dies between OFFERING and receiving "acc", the contact is silently lost (no recovery path on restart).
+
+**Decision:** This is intentional and acceptable because:
+1. User must re-scan the QR code (same cost as first scan)
+2. Alternative (persistent pending contacts) adds complexity and requires cleanup logic
+3. Session lifetime is typically minutes, not hours
+
+**Note:** Pending contacts are **never** written to SharedPreferences; they live entirely in memory.
+
+### Issue #3: Encryption.kt API Design for Android KeyStore (HIGH PRIORITY)
+
+**Problem:** The original Encryption.kt passes raw `PrivateKey` objects to `decrypt()`:
+```kotlin
+decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray
+```
+
+With Android KeyStore migration, private keys become **opaque aliases**—they never leave the secure enclave, and raw key extraction is impossible. The ECDH operation must instead use the alias string directly.
+
+**Solution:** Redesign Encryption.kt's decrypt API to accept a KeyStore alias:
+```kotlin
+// Before (won't work with KeyStore)
+fun decrypt(data: ByteArray, privateKey: PrivateKey): ByteArray
+
+// After (KeyStore-aware)
+fun decrypt(data: ByteArray, keystoreAlias: String): ByteArray
+```
+
+**Implementation Pattern:**
+```kotlin
+fun decrypt(data: ByteArray, keystoreAlias: String): ByteArray {
+    val ks = KeyStore.getInstance("AndroidKeyStore")
+    ks.load(null)
+    val keyEntry = ks.getEntry(keystoreAlias, null) as KeyStore.PrivateKeyEntry
+    val privateKey = keyEntry.privateKey
+
+    // Now use KeyAgreement with KeyStore-backed key
+    // (still opaque, but we don't need to extract it)
+    val ka = KeyAgreement.getInstance("ECDH", "AndroidKeyStore")
+    ka.init(privateKey)
+    // ... continue with ECDH
+}
+```
+
+**API Contract Summary:**
+- **Encryption module** (`Encryption.kt`): Receives keystoreAlias strings, never raw PrivateKey objects
+- **Key management module** (`KeyManager.kt`): Manages alias creation and exposes only `getKeystoreAlias()` and `getPublicKeyBytes()`
+- **P2PMessenger** (future): Calls `Encryption.decrypt(data, KeyManager.getKeystoreAlias())`
+
+This design ensures private keys are **never extracted**, meeting Android KeyStore's zero-exposure guarantee.
 
 ---
 

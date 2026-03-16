@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,7 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,10 +35,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.painterResource
@@ -48,6 +52,7 @@ import com.davv.trusti.smp.P2PMessenger
 import com.davv.trusti.ui.TruSTITheme
 import com.davv.trusti.ui.StandardPageLayout
 import com.davv.trusti.ui.StandardEmptyState
+import com.davv.trusti.ui.ContactVisibilityDialog
 import com.davv.trusti.utils.ContactStore
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -67,6 +72,7 @@ class BondsFragment : Fragment() {
         setContent {
             TruSTITheme {
                 var bondToDelete by remember { mutableStateOf<Contact?>(null) }
+                var bondToEditVisibility by remember { mutableStateOf<Contact?>(null) }
 
                 if (bondToDelete != null) {
                     val bond = bondToDelete!!
@@ -90,6 +96,24 @@ class BondsFragment : Fragment() {
                     )
                 }
                 
+                if (bondToEditVisibility != null) {
+                    val contact = bondToEditVisibility!!
+                    ContactVisibilityDialog(
+                        contact = contact,
+                        onDismiss = { bondToEditVisibility = null },
+                        onSave = { newPrefs ->
+                            // Update the contact with new sharing preferences
+                            val updatedContact = contact.copy(ourSharingPrefs = newPrefs)
+                            ContactStore.save(requireContext(), updatedContact)
+                            // Update the local bonds list
+                            bonds = bonds.map { 
+                                if (it.publicKey == contact.publicKey) updatedContact else it 
+                            }
+                            bondToEditVisibility = null
+                        }
+                    )
+                }
+                
                 StandardPageLayout(
                     title = stringResource(R.string.nav_bonds),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -100,7 +124,7 @@ class BondsFragment : Fragment() {
                         item {
                             StandardEmptyState(
                                 title = stringResource(R.string.contacts_empty_title),
-                                subtitle = stringResource(R.string.contacts_empty_sub) + "\n\n" + stringResource(R.string.contacts_long_press_hint),
+                                subtitle = stringResource(R.string.contacts_empty_sub),
                                 icon = {
                                     Text(
                                         text = "🤝",
@@ -113,8 +137,9 @@ class BondsFragment : Fragment() {
                         items(bonds, key = { it.publicKey }) { bond ->
                             BondCard(
                                 bond = bond,
-                                onClick = { ConversationActivity.start(requireContext(), bond) },
-                                onLongClick = { bondToDelete = bond }
+                                onClick = { ContactProfileActivity.start(requireContext(), bond) },
+                                onDelete = { bondToDelete = bond },
+                                onVisibilityClick = { bondToEditVisibility = bond }
                             )
                         }
                     }
@@ -126,12 +151,7 @@ class BondsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         loadBonds()
-        
-        // Refresh when a new bond is added via handshake
-        P2PMessenger.get(requireContext()).messageFlow
-            .onEach { loadBonds() }
-            .launchIn(viewLifecycleOwner.lifecycleScope)
-        
+
         // Listen for peer events (status responses, channel state changes)
         P2PMessenger.get(requireContext()).peerEventFlow
             .onEach { event ->
@@ -140,13 +160,17 @@ class BondsFragment : Fragment() {
                         updateContactWithStatus(event.fromPublicKey, event.hasPositive, event.queuedAt)
                     }
                     is P2PMessenger.PeerEvent.ChannelOpened -> {
-                        updateContactConnectionStatus(event.contact.publicKey, true)
+                        if (event.isNew) loadBonds()   // contact was just saved — reload the list
+                        else updateContactConnectionStatus(event.contact.publicKey, true)
                     }
                     is P2PMessenger.PeerEvent.ChannelClosed -> {
                         updateContactConnectionStatus(event.contact.publicKey, false)
                     }
-                    is P2PMessenger.PeerEvent.IncomingRequest -> Unit // handled in MainActivity
-                    is P2PMessenger.PeerEvent.BondRemoved -> loadBonds()
+                    is P2PMessenger.PeerEvent.IncomingBondRequest -> Unit // handled in MainActivity
+                    is P2PMessenger.PeerEvent.RequestRejected -> Unit // handled in MainActivity
+                    is P2PMessenger.PeerEvent.BondRemoved -> {
+                        loadBonds()
+                    }
                 }
             }
             .launchIn(viewLifecycleOwner.lifecycleScope)
@@ -212,43 +236,54 @@ class BondsFragment : Fragment() {
             } else contact
         }
         bonds = updatedContacts
-        
-        // Save updated contact to storage
-        val existingContact = updatedContacts.find { it.publicKey == publicKey }
-        existingContact?.let { ContactStore.save(requireContext(), it) }
     }
     
     private fun showCriticalStatusNotification(publicKey: String, queuedAt: Long = 0L) {
         val contact = bonds.find { it.publicKey == publicKey }
-        val message = if (queuedAt > 0) {
-            val delay = System.currentTimeMillis() - queuedAt
-            "⚠️ ${contact?.name ?: "Contact"} status changed to POSITIVE (${delay / 1000 / 60}min ago)"
+        val name = contact?.name ?: getString(R.string.notification_contact_fallback)
+        val text = if (queuedAt > 0) {
+            val minutesAgo = (System.currentTimeMillis() - queuedAt) / 60_000
+            getString(R.string.notification_status_text_delayed, name, minutesAgo)
         } else {
-            "⚠️ ${contact?.name ?: "Contact"} status changed to POSITIVE"
+            getString(R.string.notification_status_text, name)
         }
-        
-        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG).show()
+        runCatching {
+            val notif = androidx.core.app.NotificationCompat.Builder(
+                requireContext(), MainActivity.NOTIF_CHANNEL_STATUS
+            )
+                .setSmallIcon(R.drawable.siren_24px)
+                .setContentTitle(getString(R.string.notification_status_title))
+                .setContentText(text)
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(text))
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .build()
+            androidx.core.app.NotificationManagerCompat.from(requireContext())
+                .notify(publicKey.hashCode(), notif)
+        }
     }
 
-    private fun loadBonds() {
-        bonds = ContactStore.load(requireContext())
+    internal fun loadBonds() {
+        val connected = P2PMessenger.get(requireContext()).connectedPeers()
+        bonds = ContactStore.load(requireContext()).map { contact ->
+            if (contact.publicKey in connected) contact.copy(isConnected = true) else contact
+        }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BondCard(
     bond: Contact,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onDelete: () -> Unit,
+    onVisibilityClick: () -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = { onClick() },
-                onLongClick = { onLongClick() }
-            ),
+            .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(
@@ -282,40 +317,99 @@ private fun BondCard(
                         Icon(
                             imageVector = Icons.Filled.Circle,
                             contentDescription = if (bond.isConnected) "Connected" else "Disconnected",
-                            tint = if (bond.isConnected) Color.Green else Color.Gray,
+                            tint = if (bond.isConnected) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.outline,
                             modifier = Modifier.size(8.dp)
                         )
                     }
                     
-                    Text(
-                        text = "Key: ${bond.publicKey.take(8)}…",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.alpha(0.7f).padding(top = 2.dp)
-                    )
-                    
-                    // Status indicator (green checkmark or red siren)
-                    bond.diseaseStatus?.let { status ->
-                        Icon(
-                            painter = painterResource(
-                                if (status.hasPositive) R.drawable.siren_24px else R.drawable.assignment_turned_in_24px
-                            ),
-                            contentDescription = if (status.hasPositive) "Has positive tests" else "No positive tests",
-                            tint = if (status.hasPositive) Color(0xFFE53935) else Color(0xFF4CAF50),
-                            modifier = Modifier.size(20.dp)
+                    // Show disambiguation handle as subtitle if available
+                    bond.disambiguation?.let { handle ->
+                        Text(
+                            text = handle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.alpha(0.6f).padding(top = 2.dp)
                         )
+                    }
+
+                    // Status indicator with label
+                    bond.diseaseStatus?.let { status ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 4.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(
+                                    if (status.hasPositive) R.drawable.siren_24px
+                                    else R.drawable.assignment_turned_in_24px
+                                ),
+                                contentDescription = null,
+                                tint = if (status.hasPositive) MaterialTheme.colorScheme.error
+                                       else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (status.hasPositive)
+                                    stringResource(R.string.bond_status_positive)
+                                else
+                                    stringResource(R.string.bond_status_clear),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (status.hasPositive) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
                 
-                bond.disambiguation?.let { disambiguation ->
-                    Text(
-                        text = disambiguation,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .alpha(0.5f)
-                            .padding(start = 8.dp)
-                    )
+                // Three-dot menu
+                Box {
+                    IconButton(
+                        onClick = { expanded = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = "More options",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    
+                    DropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Privacy") },
+                            onClick = {
+                                expanded = false
+                                onVisibilityClick()
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.visibility_lock_24px),
+                                    contentDescription = "Privacy settings",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete") },
+                            onClick = {
+                                expanded = false
+                                onDelete()
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.heart_broken_24px),
+                                    contentDescription = "Delete contact",
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }

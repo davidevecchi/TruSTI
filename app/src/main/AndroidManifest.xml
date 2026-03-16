@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature
         android:name="android.hardware.camera"
@@ -31,9 +32,13 @@
         </activity>
 
         <activity
-            android:name=".ConversationActivity"
+            android:name=".ScannerActivity"
             android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:screenOrientation="portrait" />
+
+        <activity
+            android:name=".ContactProfileActivity"
+            android:exported="false" />
 
         <activity
             android:name=".AddRecordActivity"

@@ -10,6 +10,7 @@ object ProfileManager {
     private const val KEY_SHARE_STATUS = "share_status"
     private const val KEY_SHARE_COUNTER = "share_counter"
     private const val KEY_SHARE_HISTORY = "share_history"
+    private const val KEY_SHARE_VACCINES = "share_vaccines"
 
     private val adjectives = listOf(
         "swift", "quiet", "brave", "bright", "calm", "cool", "eager", "fair", "gentle", "happy",
@@ -64,6 +65,14 @@ object ProfileManager {
     fun setShareHistory(context: Context, value: Boolean) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putBoolean(KEY_SHARE_HISTORY, value).apply()
+    }
+
+    fun getShareVaccines(context: Context): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_SHARE_VACCINES, false)
+
+    fun setShareVaccines(context: Context, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_SHARE_VACCINES, value).apply()
     }
 
     fun rollDisambiguation(context: Context): String {

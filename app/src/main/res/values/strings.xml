@@ -36,10 +36,6 @@
     <string name="settings_relay_hint">ws://your-relay:8080</string>
     <string name="settings_relay_save">Save</string>
 
-    <!-- Conversation screen -->
-    <string name="hint_message">Message…</string>
-    <string name="btn_send">Send</string>
-
     <!-- Tests screen (list / cards) -->
     <string name="tests_title">Tests</string>
     <string name="tests_empty_title">No tests yet</string>
@@ -65,11 +61,51 @@
     <string name="tests_delete_message">Remove \"%s\"?</string>
     <string name="tests_delete_confirm">Delete</string>
 
+    <!-- HomeFragment connection status -->
+    <string name="connect_status_connected">● Connected</string>
+    <string name="connect_status_connecting">● Connecting…</string>
+
+    <!-- Already bonded dialog -->
+    <string name="already_bonded_title">Already bonded</string>
+    <string name="already_bonded_message">You are already bonded with %s.</string>
+
+    <!-- Name peer dialog (after scanning QR) -->
+    <string name="name_peer_title">Name this peer</string>
+    <string name="name_peer_hint">Name (optional)</string>
+    <string name="name_peer_connect">Connect</string>
+
     <!-- Incoming bond request dialog -->
     <string name="bond_request_title">Bond request</string>
-    <string name="bond_request_message">Someone wants to bond with you.\n\nKey: %s…\n\nDo you want to accept?</string>
+    <string name="bond_request_message">%s wants to bond with you.</string>
     <string name="bond_request_accept">Accept</string>
     <string name="bond_request_decline">Decline</string>
+
+    <!-- Channel opened dialog -->
+    <string name="bond_established_title">Bond established</string>
+    <string name="bond_established_message">Your secure connection with %s is ready.</string>
+    <string name="view_profile">View Profile</string>
+    <string name="later">Later</string>
+
+    <!-- Contact profile screen -->
+    <string name="profile_title">Profile</string>
+    <string name="profile_status_connected">Connected</string>
+    <string name="profile_status_offline">Offline</string>
+    <string name="profile_status_section">Health Status</string>
+    <string name="profile_status_unknown">Not shared yet</string>
+    <string name="profile_key_label">Public key</string>
+    <string name="profile_updated">Updated %s</string>
+
+    <!-- Bond card status labels -->
+    <string name="bond_status_positive">Positive test</string>
+    <string name="bond_status_clear">All clear</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_name">Status Alerts</string>
+    <string name="notification_channel_desc">Alerts when a bond\'s health status changes to positive</string>
+    <string name="notification_status_title">Status alert</string>
+    <string name="notification_status_text">%s has a positive test result</string>
+    <string name="notification_status_text_delayed">%s had a positive test result (%d min ago)</string>
+    <string name="notification_contact_fallback">A contact</string>
 
     <!-- Status labels -->
     <string name="status_positive">Positive</string>

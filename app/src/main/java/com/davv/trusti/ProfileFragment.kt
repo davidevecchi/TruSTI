@@ -60,6 +60,73 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Get the latest POSITIVE/NEGATIVE result for each disease
+ */
+private fun getLatestPosNegResults(tests: List<com.davv.trusti.model.TestsRecord>): Map<String, TestResult> {
+    val results = mutableMapOf<String, Pair<TestResult, Long>>()
+    
+    tests.forEach { record ->
+        record.tests.forEach { test ->
+            if (test.result == TestResult.POSITIVE || test.result == TestResult.NEGATIVE) {
+                val existing = results[test.disease]
+                if (existing == null || record.date > existing.second) {
+                    results[test.disease] = Pair(test.result, record.date)
+                }
+            }
+        }
+    }
+    
+    return results.mapValues { it.value.first }
+}
+
+/**
+ * Get vaccination status for diseases (especially HPV)
+ */
+private fun getVaccinationStatus(tests: List<com.davv.trusti.model.TestsRecord>): Map<String, Boolean> {
+    val vaccinated = mutableMapOf<String, Boolean>()
+    
+    tests.forEach { record ->
+        record.tests.forEach { test ->
+            if (test.result == TestResult.VACCINATED) {
+                vaccinated[test.disease] = true
+            }
+        }
+    }
+    
+    return vaccinated
+}
+
+/**
+ * Process timeline to show only last VACCINATED and last POS/NEG test per disease
+ */
+private fun processTimeline(tests: List<com.davv.trusti.model.TestsRecord>): List<com.davv.trusti.model.TestsRecord> {
+    val lastVax = mutableMapOf<String, com.davv.trusti.model.TestsRecord>()
+    val lastPosNeg = mutableMapOf<String, com.davv.trusti.model.TestsRecord>()
+    
+    tests.forEach { record ->
+        record.tests.forEach { test ->
+            when (test.result) {
+                TestResult.VACCINATED -> {
+                    val existing = lastVax[test.disease]
+                    if (existing == null || record.date > existing.date) {
+                        lastVax[test.disease] = record.copy(tests = listOf(test))
+                    }
+                }
+                TestResult.POSITIVE, TestResult.NEGATIVE -> {
+                    val existing = lastPosNeg[test.disease]
+                    if (existing == null || record.date > existing.date) {
+                        lastPosNeg[test.disease] = record.copy(tests = listOf(test))
+                    }
+                }
+                else -> {}
+            }
+        }
+    }
+    
+    return (lastVax.values + lastPosNeg.values).sortedByDescending { it.date }
+}
+
 class ProfileFragment : Fragment() {
 
     override fun onCreateView(
@@ -85,12 +152,11 @@ private fun ProfileScreen() {
 
     var name by remember { mutableStateOf(ProfileManager.getUsername(context)) }
     var disambig by remember { mutableStateOf(ProfileManager.getDisambiguation(context)) }
-    var shareStatus by remember { mutableStateOf(ProfileManager.getShareStatus(context)) }
-    var shareCounter by remember { mutableStateOf(ProfileManager.getShareCounter(context)) }
-    var shareHistory by remember { mutableStateOf(ProfileManager.getShareHistory(context)) }
 
     val tests = remember { TestsStore.load(context) }
-    val hasPositive = tests.any { record -> record.tests.any { it.result == TestResult.POSITIVE } }
+    val latestPosNegResults = remember { getLatestPosNegResults(tests) }
+    val vaccinationStatus = remember { getVaccinationStatus(tests) }
+    val hasPositive = latestPosNegResults.values.any { it == TestResult.POSITIVE }
     val testCount = tests.size
     val dateFmt = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
 
@@ -116,12 +182,14 @@ private fun ProfileScreen() {
                 ProfilePreview(
                     name = name,
                     disambig = disambig,
-                    shareStatus = shareStatus,
+                    shareStatus = ProfileManager.getShareStatus(context),
                     hasPositive = hasPositive,
-                    shareCounter = shareCounter,
+                    shareCounter = ProfileManager.getShareCounter(context),
                     testCount = testCount,
-                    shareHistory = shareHistory,
+                    shareHistory = ProfileManager.getShareHistory(context),
                     tests = tests,
+                    latestPosNegResults = latestPosNegResults,
+                    vaccinationStatus = vaccinationStatus,
                     dateFmt = dateFmt
                 )
             }
@@ -130,27 +198,12 @@ private fun ProfileScreen() {
                 ProfileEdit(
                     name = name,
                     disambig = disambig,
-                    shareStatus = shareStatus,
-                    shareCounter = shareCounter,
-                    shareHistory = shareHistory,
                     onNameChange = { name = it },
                     onDisambigChange = { disambig = it },
                     onSave = {
                         if (name.isNotBlank()) ProfileManager.setUsername(context, name)
                     },
-                    onRollDisambig = { disambig = ProfileManager.rollDisambiguation(context) },
-                    onShareStatusChange = {
-                        shareStatus = it
-                        ProfileManager.setShareStatus(context, it)
-                    },
-                    onShareCounterChange = {
-                        shareCounter = it
-                        ProfileManager.setShareCounter(context, it)
-                    },
-                    onShareHistoryChange = {
-                        shareHistory = it
-                        ProfileManager.setShareHistory(context, it)
-                    }
+                    onRollDisambig = { disambig = ProfileManager.rollDisambiguation(context) }
                 )
             }
         }
@@ -167,6 +220,8 @@ private fun ProfilePreview(
     testCount: Int,
     shareHistory: Boolean,
     tests: List<com.davv.trusti.model.TestsRecord>,
+    latestPosNegResults: Map<String, TestResult>,
+    vaccinationStatus: Map<String, Boolean>,
     dateFmt: SimpleDateFormat
 ) {
     Card(
@@ -221,15 +276,54 @@ private fun ProfilePreview(
                         Spacer(Modifier.width(4.dp))
                         Text("Status hidden", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
                     }
-                    hasPositive -> {
-                        Icon(Icons.Filled.Close, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Has positive results", style = MaterialTheme.typography.bodySmall, color = Color(0xFFE53935))
-                    }
-                    else -> {
+                    latestPosNegResults.isEmpty() && vaccinationStatus.isEmpty() -> {
                         Icon(Icons.Filled.Check, contentDescription = null, tint = Color(0xFF43A047), modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("No positive results", style = MaterialTheme.typography.bodySmall, color = Color(0xFF43A047))
+                        Text("No test results", style = MaterialTheme.typography.bodySmall, color = Color(0xFF43A047))
+                    }
+                    else -> {
+                        val statusParts = mutableListOf<String>()
+                        val statusColors = mutableListOf<Color>()
+                        
+                        // Check for positive results
+                        if (hasPositive) {
+                            statusParts.add("Has positive results")
+                            statusColors.add(Color(0xFFE53935))
+                        }
+                        
+                        // Check HPV special case
+                        val hpvVax = vaccinationStatus["HPV"] == true
+                        val hpvResult = latestPosNegResults["HPV"]
+                        if (hpvVax && hpvResult != null) {
+                            val hpvStatus = when (hpvResult) {
+                                TestResult.POSITIVE -> "HPV: vaccinated + positive"
+                                TestResult.NEGATIVE -> "HPV: vaccinated + negative"
+                                else -> null
+                            }
+                            hpvStatus?.let {
+                                statusParts.add(it)
+                                statusColors.add(if (hpvResult == TestResult.POSITIVE) Color(0xFFE53935) else Color(0xFF43A047))
+                            }
+                        } else if (hpvVax) {
+                            statusParts.add("HPV: vaccinated")
+                            statusColors.add(Color(0xFF43A047))
+                        }
+                        
+                        // If no specific status yet, show general status
+                        if (statusParts.isEmpty()) {
+                            statusParts.add("No positive results")
+                            statusColors.add(Color(0xFF43A047))
+                        }
+                        
+                        // Display first status with icon
+                        Icon(
+                            if (statusParts.first().contains("positive")) Icons.Filled.Close else Icons.Filled.Check,
+                            contentDescription = null, 
+                            tint = statusColors.first(), 
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(statusParts.first(), style = MaterialTheme.typography.bodySmall, color = statusColors.first())
                     }
                 }
             }
@@ -252,15 +346,17 @@ private fun ProfilePreview(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(4.dp))
-                tests.forEach { record ->
-                    val label = record.tests.joinToString(", ") { it.disease }
-                    val resultLabel = when {
-                        record.tests.any { it.result == TestResult.POSITIVE } -> "positive"
-                        record.tests.any { it.result == TestResult.NEGATIVE } -> "negative"
+                val processedTimeline = processTimeline(tests)
+                processedTimeline.forEach { record ->
+                    val test = record.tests.first()
+                    val resultLabel = when (test.result) {
+                        TestResult.POSITIVE -> "positive"
+                        TestResult.NEGATIVE -> "negative"
+                        TestResult.VACCINATED -> "vaccinated"
                         else -> "unknown"
                     }
                     Text(
-                        text = "${dateFmt.format(Date(record.date))}  ·  $label  ·  $resultLabel",
+                        text = "${dateFmt.format(Date(record.date))}  ·  ${test.disease}  ·  $resultLabel",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -275,21 +371,14 @@ private fun ProfilePreview(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ProfileEdit(
     name: String,
     disambig: String,
-    shareStatus: Boolean,
-    shareCounter: Boolean,
-    shareHistory: Boolean,
     onNameChange: (String) -> Unit,
     onDisambigChange: (String) -> Unit,
     onSave: () -> Unit,
-    onRollDisambig: () -> Unit,
-    onShareStatusChange: (Boolean) -> Unit,
-    onShareCounterChange: (Boolean) -> Unit,
-    onShareHistoryChange: (Boolean) -> Unit
+    onRollDisambig: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -344,56 +433,6 @@ private fun ProfileEdit(
             TextButton(onClick = onSave, modifier = Modifier.align(Alignment.End)) {
                 Text("Save", style = MaterialTheme.typography.labelLarge)
             }
-
-            Spacer(Modifier.height(8.dp))
-            Text("Visibility", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(12.dp))
-
-            ToggleRow(
-                label = "Share status with bonds",
-                subLabel = "Bonds can see if you have positive results",
-                checked = shareStatus,
-                onCheckedChange = onShareStatusChange
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            ToggleRow(
-                label = "Share test count",
-                subLabel = "Show how many tests you've recorded",
-                checked = shareCounter,
-                onCheckedChange = onShareCounterChange
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            ToggleRow(
-                label = "Share test history",
-                subLabel = "Show dates and diseases tested",
-                checked = shareHistory,
-                onCheckedChange = onShareHistoryChange
-            )
         }
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    label: String,
-    subLabel: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(subLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
