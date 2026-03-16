@@ -3,6 +3,8 @@ package com.davv.trusti.smp
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -14,15 +16,12 @@ import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One WebRTC PeerConnection + DataChannel for a single contact.
- *
- * Uses "vanilla ICE": waits for full ICE gathering before sending SDP,
- * so no trickle-ICE relay is needed.
+ * Uses vanilla ICE: waits for full ICE gathering before sending SDP.
  */
 class WebRtcTransport(
     private val scope: CoroutineScope,
@@ -32,8 +31,8 @@ class WebRtcTransport(
     private val onMessage: (ByteArray) -> Unit,
     private val onStatusChange: (Boolean) -> Unit,
     private val onOfferSent: (offerId: String) -> Unit = {},
-    private val signOffer: ((offerId: String, sdp: String) -> String)? = null,
-    private val onConnectionTimeout: (() -> Unit)? = null,
+    private val myUsername: String? = null,
+    private val myDisambig: String? = null,
     iceServers: List<PeerConnection.IceServer> = DEFAULT_ICE_SERVERS
 ) {
     private val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
@@ -41,12 +40,14 @@ class WebRtcTransport(
         continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
     }
 
-    private var pc: PeerConnection? = null
-    private var dc: DataChannel? = null
+    @Volatile private var pc: PeerConnection? = null
+    @Volatile private var dc: DataChannel? = null
     private val closed = AtomicBoolean(false)
-    @Volatile private var lastAnnounce: (() -> Unit)? = null
+    private var iceTimeoutJob: Job? = null
+    private val dcObserverRef = AtomicReference<DataChannel.Observer?>(null)
+    private var lastAnnounce: (() -> Unit)? = null
 
-    fun isOpen(): Boolean  = dc?.state() == DataChannel.State.OPEN
+    fun isOpen(): Boolean = !closed.get() && dc?.state() == DataChannel.State.OPEN
     fun isClosed(): Boolean = closed.get()
 
     /** Initiator path: create offer and send it via signaling once ICE is complete. */
@@ -54,31 +55,51 @@ class WebRtcTransport(
         val offerId = java.util.UUID.randomUUID().toString().replace("-", "").take(20)
         Log.d(TAG, "createOffer offerId=${offerId.take(8)} room=${offerRoom?.take(16)}")
         val sent = AtomicBoolean(false)
+
         fun sendOffer() {
-            if (!sent.compareAndSet(false, true)) return
-            val sdp  = pc?.localDescription?.description ?: return
-            val room = offerRoom ?: return
+            if (!sent.compareAndSet(false, true)) {
+                iceTimeoutJob?.cancel()
+                return
+            }
+            val sdp = pc?.localDescription?.description ?: run {
+                Log.e(TAG, "local description null when sending offer")
+                return
+            }
+            val room = offerRoom ?: run {
+                Log.e(TAG, "offer room null when sending offer")
+                return
+            }
             Log.d(TAG, "ICE gathered → sending offer offerId=${offerId.take(8)}")
-            val sig       = signOffer?.invoke(offerId, sdp)
             val sdpWithId = "$sdp\r\na=x-trusti-pk:$myPk"
-            lastAnnounce  = { signaling.announceWithOffer(room, offerId, sdpWithId, myPk, sig) }
+            lastAnnounce = { signaling.announceWithOffer(room, offerId, sdpWithId, myPk, myUsername, myDisambig) }
             lastAnnounce!!.invoke()
             onOfferSent(offerId)
         }
 
-        pc = factory!!.createPeerConnection(rtcConfig, pcObserver(
-            onGatheringComplete = { sendOffer() }
-        )) ?: run { Log.e(TAG, "createPeerConnection returned null"); return }
+        pc = factory?.createPeerConnection(rtcConfig, pcObserver(
+            onGatheringComplete = {
+                iceTimeoutJob?.cancel()
+                sendOffer()
+            }
+        )) ?: run {
+            Log.e(TAG, "createPeerConnection returned null")
+            return
+        }
 
         dc = pc!!.createDataChannel("trusti", DataChannel.Init())
-            .also { it.registerObserver(dcObserver()) }
+        val observer = dcObserver()
+        dc?.registerObserver(observer)
+        dcObserverRef.set(observer)
 
-        pc!!.createOffer(sdpObserver { sdp ->
+        pc!!.createOffer(sdpObserver({ sdp ->
             Log.d(TAG, "offer SDP created, setting local description")
             pc?.setLocalDescription(NoopSdpObserver, sdp)
-        }, MediaConstraints())
+        }, { error ->
+            Log.e(TAG, "offer creation failed: $error")
+            iceTimeoutJob?.cancel()
+        }), MediaConstraints())
 
-        scope.launch {
+        iceTimeoutJob = scope.launch {
             delay(ICE_TIMEOUT_MS)
             if (!closed.get() && !sent.get()) {
                 Log.w(TAG, "ICE gathering timeout — forcing offer send")
@@ -91,28 +112,50 @@ class WebRtcTransport(
     fun handleOffer(sdp: String, offerId: String, fromPeerId: String) {
         Log.d(TAG, "handleOffer offerId=${offerId.take(8)} room=${offerRoom?.take(16)}")
         val sent = AtomicBoolean(false)
+
         fun sendAnswer() {
-            if (!sent.compareAndSet(false, true)) return
-            val answerSdp = pc?.localDescription?.description ?: return
-            val room      = offerRoom ?: return
+            if (!sent.compareAndSet(false, true)) {
+                iceTimeoutJob?.cancel()
+                return
+            }
+            val answerSdp = pc?.localDescription?.description ?: run {
+                Log.e(TAG, "local description null when sending answer")
+                return
+            }
+            val room = offerRoom ?: run {
+                Log.e(TAG, "offer room null when sending answer")
+                return
+            }
             Log.d(TAG, "ICE gathered → sending answer offerId=${offerId.take(8)}")
             signaling.sendAnswer(room, fromPeerId, offerId, answerSdp)
         }
 
-        pc = factory!!.createPeerConnection(rtcConfig, pcObserver(
-            onGatheringComplete = { sendAnswer() },
+        pc = factory?.createPeerConnection(rtcConfig, pcObserver(
+            onGatheringComplete = {
+                iceTimeoutJob?.cancel()
+                sendAnswer()
+            },
             onDataChannel = { ch -> attachDc(ch) }
-        )) ?: run { Log.e(TAG, "createPeerConnection returned null (answerer)"); return }
+        )) ?: run {
+            Log.e(TAG, "createPeerConnection returned null (answerer)")
+            return
+        }
 
-        pc!!.setRemoteDescription(sdpObserver {
+        pc!!.setRemoteDescription(sdpObserver({
             Log.d(TAG, "remote offer set, creating answer")
-            pc?.createAnswer(sdpObserver { answer ->
+            pc?.createAnswer(sdpObserver({ answer ->
                 Log.d(TAG, "answer SDP created, setting local description")
                 pc?.setLocalDescription(NoopSdpObserver, answer)
-            }, MediaConstraints())
-        }, SessionDescription(SessionDescription.Type.OFFER, sdp))
+            }, { error ->
+                Log.e(TAG, "answer creation failed: $error")
+                iceTimeoutJob?.cancel()
+            }), MediaConstraints())
+        }, { error ->
+            Log.e(TAG, "remote offer set failed: $error")
+            iceTimeoutJob?.cancel()
+        }), SessionDescription(SessionDescription.Type.OFFER, sdp))
 
-        scope.launch {
+        iceTimeoutJob = scope.launch {
             delay(ICE_TIMEOUT_MS)
             if (!closed.get() && !sent.get()) {
                 Log.w(TAG, "ICE gathering timeout — forcing answer send")
@@ -130,8 +173,10 @@ class WebRtcTransport(
         )
     }
 
-    /** Re-send the offer to the signaling room (no new SDP generated). */
-    fun reannounce() { lastAnnounce?.invoke() }
+    /** Re-announce the same offer (called on retry if peer didn't receive it). */
+    fun reannounce() {
+        lastAnnounce?.invoke()
+    }
 
     fun sendMessage(data: ByteArray): Boolean {
         if (!isOpen()) {
@@ -144,7 +189,15 @@ class WebRtcTransport(
     fun close() {
         if (closed.getAndSet(true)) return
         Log.d(TAG, "close")
-        dc?.unregisterObserver()
+
+        iceTimeoutJob?.cancel()
+        iceTimeoutJob = null
+
+        dcObserverRef.get()?.let { observer ->
+            dc?.unregisterObserver()
+            dcObserverRef.set(null)
+        }
+
         dc?.close()
         dc?.dispose()
         pc?.close()
@@ -157,7 +210,9 @@ class WebRtcTransport(
 
     private fun attachDc(channel: DataChannel) {
         dc = channel
-        channel.registerObserver(dcObserver())
+        val observer = dcObserver()
+        channel.registerObserver(observer)
+        dcObserverRef.set(observer)
     }
 
     private fun dcObserver() = object : DataChannel.Observer {
@@ -193,19 +248,20 @@ class WebRtcTransport(
             if (state == PeerConnection.PeerConnectionState.FAILED ||
                 state == PeerConnection.PeerConnectionState.DISCONNECTED) {
                 onStatusChange(false)
-                onConnectionTimeout?.invoke()
             }
         }
     }
 
     companion object {
         private const val TAG = "WebRtcTransport"
-
         const val ICE_TIMEOUT_MS = 10_000L
 
+        // NOTE: Only STUN servers — symmetric NAT (common on mobile) requires TURN.
         val DEFAULT_ICE_SERVERS = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer()
+            PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer(),
+            PeerConnection.IceServer.builder("stun:stunserver.stunprotocol.org:3478").createIceServer(),
         )
 
         @Volatile private var factory: PeerConnectionFactory? = null
@@ -225,28 +281,26 @@ class WebRtcTransport(
                 Log.d(TAG, "PeerConnectionFactory ready")
             }
         }
-
-        fun sha256Hex(input: String): String =
-            MessageDigest.getInstance("SHA-256")
-                .digest(input.toByteArray())
-                .joinToString("") { "%02x".format(it) }
     }
 }
 
 // Boilerplate-free helpers
 
-private fun sdpObserver(onSuccess: (SessionDescription) -> Unit) = object : SdpObserver {
+private fun sdpObserver(
+    onSuccess: (SessionDescription) -> Unit,
+    onError: (String) -> Unit = { Log.e("WebRtcTransport", "SDP error: $it") }
+) = object : SdpObserver {
     override fun onCreateSuccess(sdp: SessionDescription) = onSuccess(sdp)
     override fun onSetSuccess() {}
-    override fun onCreateFailure(error: String) { Log.e("WebRtcTransport", "SDP create failure: $error") }
-    override fun onSetFailure(error: String)    { Log.e("WebRtcTransport", "SDP set failure: $error")    }
+    override fun onCreateFailure(error: String) { onError("SDP create failure: $error") }
+    override fun onSetFailure(error: String) { onError("SDP set failure: $error") }
 }
 
 private object NoopSdpObserver : SdpObserver {
     override fun onCreateSuccess(sdp: SessionDescription) {}
     override fun onSetSuccess() {}
     override fun onCreateFailure(error: String) { Log.e("WebRtcTransport", "SDP create failure: $error") }
-    override fun onSetFailure(error: String)    { Log.e("WebRtcTransport", "SDP set failure: $error")    }
+    override fun onSetFailure(error: String) { Log.e("WebRtcTransport", "SDP set failure: $error") }
 }
 
 private open class SimplePCObserver : PeerConnection.Observer {
