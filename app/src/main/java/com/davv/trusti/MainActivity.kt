@@ -1,28 +1,43 @@
 package com.davv.trusti
 
+import android.Manifest
 import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.davv.trusti.databinding.ActivityMainBinding
+import com.davv.trusti.model.SharingPreferences
 import com.davv.trusti.smp.P2PMessenger
-import com.davv.trusti.utils.ContactStore
+import com.davv.trusti.ui.BondRequestDialog
+import com.davv.trusti.ui.TruSTITheme
 import com.davv.trusti.utils.FontExtensions
+import com.davv.trusti.utils.ProfileManager
 import com.davv.trusti.utils.TestsStore
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private var pendingBondRequest: P2PMessenger.PeerEvent.IncomingBondRequest? = null
+    private val showBondRequestDialog = mutableStateOf(false)
+    private var dialogComposeView: ComposeView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Apply saved theme before inflating views
@@ -35,6 +50,23 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         lifecycleScope.launch { P2PMessenger.get(this@MainActivity).initialize() }
+
+        // Create notification channel for status alerts (API 26+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIF_CHANNEL_STATUS,
+                getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply { description = getString(R.string.notification_channel_desc) }
+            getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+        }
+        // Request POST_NOTIFICATIONS permission on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+        }
 
         // Update test count badge when tests change
         updateTestCountBadge()
@@ -73,43 +105,61 @@ class MainActivity : AppCompatActivity() {
             })
             true
         }
+
+        // Setup BondRequestDialog ComposeView
+        dialogComposeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                TruSTITheme {
+                    if (showBondRequestDialog.value && pendingBondRequest != null) {
+                        val event = pendingBondRequest!!
+                        BondRequestDialog(
+                            context = this@MainActivity,
+                            senderName = event.senderName,
+                            senderDisambig = event.senderDisambig,
+                            senderSharingPrefs = event.senderSharingPrefs,
+                            onAccept = { myName, myDisambig, myPrefs ->
+                                P2PMessenger.get(this@MainActivity).approveIncomingRequest(
+                                    event.contactPk,
+                                    myName,
+                                    myDisambig,
+                                    myPrefs
+                                )
+                                showBondRequestDialog.value = false
+                                pendingBondRequest = null
+                            },
+                            onReject = {
+                                P2PMessenger.get(this@MainActivity).rejectIncomingRequest(event.contactPk)
+                                showBondRequestDialog.value = false
+                                pendingBondRequest = null
+                            }
+                        )
+                    }
+                }
+            }
+        }
+        (binding.root as android.view.ViewGroup).addView(dialogComposeView)
     }
 
     private fun handlePeerEvent(event: P2PMessenger.PeerEvent) {
         when (event) {
             is P2PMessenger.PeerEvent.ChannelOpened -> {
+                if (!event.isNew) return  // skip reconnections — no popup for existing bonds
                 val contact = event.contact
                 AlertDialog.Builder(this)
-                    .setTitle("${contact.name} connected")
-                    .setMessage(contact.disambiguation ?: contact.publicKey.take(12))
-                    .setPositiveButton("Connect") { _, _ ->
-                        ConversationActivity.start(this, contact)
+                    .setTitle(getString(R.string.bond_established_title))
+                    .setMessage(getString(R.string.bond_established_message, contact.name))
+                    .setPositiveButton(getString(R.string.view_profile)) { _, _ ->
+                        ContactProfileActivity.start(this, contact)
                     }
-                    .setNeutralButton("See status") { _, _ ->
-                        P2PMessenger.get(this).sendStatusRequest(contact)
-                        Toast.makeText(this, "Status request sent to ${contact.name}", Toast.LENGTH_SHORT).show()
-                    }
-                    .setNegativeButton("Dismiss", null)
+                    .setNegativeButton(getString(R.string.later), null)
+                    .setCancelable(false)
                     .show()
             }
 
-            is P2PMessenger.PeerEvent.IncomingRequest -> {
-                val pk = event.contactPk
-                AlertDialog.Builder(this)
-                    .setTitle(getString(R.string.bond_request_title))
-                    .setMessage(getString(R.string.bond_request_message, pk.take(12)))
-                    .setPositiveButton(getString(R.string.bond_request_accept)) { _, _ ->
-                        P2PMessenger.get(this).approveIncomingRequest(pk, "Contact ${pk.take(6)}")
-                    }
-                    .setNegativeButton(getString(R.string.bond_request_decline)) { _, _ ->
-                        P2PMessenger.get(this).rejectIncomingRequest(pk)
-                    }
-                    .setCancelable(true)
-                    .setOnCancelListener {
-                        // Reset state so A's next retry re-shows the dialog
-                        P2PMessenger.get(this).rejectIncomingRequest(pk)
-                    }
-                    .show()
+            is P2PMessenger.PeerEvent.IncomingBondRequest -> {
+                pendingBondRequest = event
+                showBondRequestDialog.value = true
             }
 
             is P2PMessenger.PeerEvent.ChannelClosed -> {
@@ -121,7 +171,14 @@ class MainActivity : AppCompatActivity() {
             is P2PMessenger.PeerEvent.BondRemoved -> {
                 // Handled in BondsFragment
             }
+            is P2PMessenger.PeerEvent.RequestRejected -> {
+                // Handled in BondsFragment
+            }
         }
+    }
+
+    fun navigateToBonds() {
+        binding.bottomNav.selectedItemId = R.id.nav_bonds
     }
 
     private fun showTab(tag: String) {
@@ -131,6 +188,11 @@ class MainActivity : AppCompatActivity() {
                 if (t == tag) show(f) else hide(f)
             }
         }.commit()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (isFinishing) P2PMessenger.get(this).onDestroy()
     }
 
     override fun onResume() {
@@ -170,5 +232,6 @@ class MainActivity : AppCompatActivity() {
         private const val TAG_TESTS    = "tests"
         private const val TAG_PROFILE  = "profile"
         private const val TAG_SETTINGS = "settings"
+        const val NOTIF_CHANNEL_STATUS = "trusti_status_alerts"
     }
 }
