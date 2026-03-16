@@ -2,179 +2,305 @@
 
 A privacy-first Android app for sharing STI test results with trusted contacts. Two people exchange a QR code once; after that they can share encrypted health status updates peer-to-peer, with no server ever seeing message content.
 
+**Architecture Overview:**
+
+```mermaid
+graph TB
+    subgraph Device_A["Device A"]
+        A_Key["EC P-256 Key<br/>(A_pub, A_priv)"]
+        A_Store["SharedPrefs:<br/>Contacts, Tests"]
+        A_Messenger["P2PMessenger"]
+        A_Encrypt["Encryption<br/>ECDH+AES"]
+        A_WebRTC["WebRTC DataChannel"]
+    end
+
+    subgraph Device_B["Device B"]
+        B_Key["EC P-256 Key<br/>(B_pub, B_priv)"]
+        B_Store["SharedPrefs:<br/>Contacts, Tests"]
+        B_Messenger["P2PMessenger"]
+        B_Encrypt["Encryption<br/>ECDH+AES"]
+        B_WebRTC["WebRTC DataChannel"]
+    end
+
+    QR["QR Code<br/>trusti://peer?pk=B_pub"]
+    Tracker["WebTorrent Tracker<br/>wss://tracker.ow.com<br/>(routing only)"]
+    STUN["Google STUN<br/>ICE Candidates"]
+
+    QR -->|Scan| A_Key
+    A_Key --> A_Messenger
+    B_Key --> B_Messenger
+
+    A_Messenger -->|Signaling| Tracker
+    B_Messenger -->|Signaling| Tracker
+    Tracker -->|Routing| A_Messenger
+    Tracker -->|Routing| B_Messenger
+
+    A_Messenger --> A_WebRTC
+    B_Messenger --> B_WebRTC
+
+    A_WebRTC -->|P2P| B_WebRTC
+    B_WebRTC -->|P2P| A_WebRTC
+
+    A_Messenger -->|Plaintext| A_Encrypt
+    A_Encrypt -->|Ciphertext| A_WebRTC
+
+    B_Messenger -->|Plaintext| B_Encrypt
+    B_Encrypt -->|Ciphertext| B_WebRTC
+
+    A_WebRTC -.->|ICE| STUN
+    B_WebRTC -.->|ICE| STUN
+
+    A_Store -.-> A_Messenger
+    B_Store -.-> B_Messenger
+
+    style Tracker fill:#fff3cd
+    style STUN fill:#f8d7da
+    style A_Encrypt fill:#d1ecf1
+    style B_Encrypt fill:#d1ecf1
+    style QR fill:#d4edda
+```
+
+---
+
+## Core Principles
+
+1. **No central server:** Keys, encryption, messaging happen on-device or directly P2P
+2. **Tracker = rendezvous only:** Routes SDP signaling; never stores/relays content
+3. **One QR scan:** After first handshake, reconnects happen automatically via permanent room
+4. **Ephemeral encryption:** Each message has its own key; past messages stay safe even if key stolen
+
 ---
 
 ## How It Works
 
 ### 1. Identity & Key Exchange
 
-Every user has a permanent EC P-256 key pair generated on first launch and stored in SharedPreferences (`crypto/KeyManager.kt`). The public key is the user's identity — there is no account, username, or server registration.
+Every user has a permanent EC P-256 key pair generated on first launch and stored in SharedPreferences (`crypto/KeyManager.kt`). The public key is the user's identity — there is no account or server.
 
-Adding a contact is done by scanning their QR code. The QR encodes a URI:
-
+Adding a contact: scan their QR code. The QR encodes:
 ```
 trusti://peer?pk=<BASE64URL_PUBKEY>
 ```
 
-This gives you their public key, which is all you need to:
-- Derive a shared signaling room for reconnection
-- Encrypt messages only they can read
+**QR Exchange Diagram:**
+```mermaid
+sequenceDiagram
+    participant A as Device A
+    participant B as Device B
+    Note over B: Display own QR<br/>QR = trusti://peer?pk=B_pub
+    Note over A: Scan B's QR
+    A->>A: Extract B_pub
+    A->>A: Compute room = sha256(sorted(A_pub + B_pub))
+    Note over A: Derive shared room<br/>Store B as contact
+    Note over B: Waiting to be scanned...
+    B->>Tracker: Announce in sha256(B_pub)
+    Note over A: Later: scan triggers handshake
+```
+
+With B's public key (B_pub), A can:
+- Derive permanent signaling room: `sha256(sorted(A_pub || B_pub))`
+- Encrypt messages so only B can decrypt
 
 ### 2. Signaling via WebTorrent Tracker
 
-Peers need to find each other to establish a direct connection. TruSTI uses a public WebTorrent tracker (`wss://tracker.openwebtorrent.com`) as a rendezvous point — the same infrastructure BitTorrent clients use to find peers for a torrent.
+Peers discover and exchange signaling through a public WebTorrent tracker (`wss://tracker.openwebtorrent.com`). **The tracker routes only encrypted SDP offers/answers — never message content.**
 
-**The tracker never sees message content.** It only routes WebRTC signaling messages (SDP offer/answer) between peers.
+**Room Types (all SHA-256 hashed):**
 
-Two room types are used (both derived with SHA-256):
+| Room Type | Key | Purpose |
+| --- | --- | --- |
+| **Personal** | `sha256(my_public_key)` | I listen here; new peers reach me after scanning my QR |
+| **Permanent** | `sha256(sorted(A_pub \|\| B_pub))` | Both peers announce here; enables reconnection without scanning |
 
-| Room           | Derivation                    | Purpose                                                             |
-| ------         | -----------                   | ---------                                                           |
-| Handshake room | `sha256(B's public key)`      | B listens here so A can reach them after scanning the QR            |
-| Permanent room | `sha256(sort(A_key + B_key))` | Both peers announce here for reconnection after the first handshake |
-
-On startup, the app announces itself in its own handshake room and in a permanent room for every saved contact.
+**Room Hashing:** Keys are concatenated lexicographically then hashed. Example: if A_pub < B_pub (byte comparison), then room = sha256(A_pub || B_pub). Both peers compute the same room ID independently.
 
 #### First-Time Connection Flow (A scans B's QR)
 
-<!-- DIAGRAM: first_connection -->
 ```mermaid
 sequenceDiagram
-    participant A as A Device<br/>(WebRTC)
-    participant STUN_A as STUN/TURN ICE<br/>(stun.l.google.com)
-    participant Tracker as WebTorrent Tracker<br/>(wss://tracker.ow.com)
-    participant STUN_B as STUN/TURN ICE<br/>(stun.l.google.com)
-    participant B as B Device<br/>(WebRTC)
+    participant A as A<br/>(Offerer)
+    participant ICE_A as STUN/TURN<br/>stun.l.google.com
+    participant Tracker as WebTorrent Tracker
+    participant ICE_B as STUN/TURN<br/>stun.l.google.com
+    participant B as B<br/>(Answerer)
 
-    Note over B: B joins sha256(B_pk)
-    Note over A: A scans B's QR
+    B->>Tracker: announce ✓ in sha256(B_pub)
+    Note over A: Scans QR → gets B_pub
 
-    A->>STUN_A: gather ICE
-    A->>Tracker: announce(offer w/SDP+ICE)<br/>to sha256(B_pk)
-    Tracker->>B: route offer
+    rect rgb(200,220,255)
+    Note over A,B: ICE Gathering (vanilla)
+    A->>ICE_A: gather candidates
+    B->>ICE_B: gather candidates
+    end
 
-    B->>STUN_B: gather ICE
-    B->>Tracker: sendAnswer(SDP+ICE)
-    Tracker->>A: route answer
+    A->>Tracker: announce + offer<br/>SDP with all ICE candidates<br/>to sha256(B_pub)
+    Tracker->>B: deliver offer
 
-    A->>B: ICE connectivity checks
-    B->>A: ICE connectivity checks
+    B->>Tracker: sendAnswer<br/>SDP with all ICE candidates
+    Tracker->>A: deliver answer
 
-    Note over A,B: WebRTC DataChannel established<br/>(direct P2P)
+    rect rgb(200,255,200)
+    Note over A,B: WebRTC Connectivity
+    A->>B: ICE checks (direct P2P)
+    B->>A: ICE checks (direct P2P)
+    Note over A,B: DataChannel open
+    end
 
-    A->>Tracker: announce(perm_room)<br/>sha256(sort(A_pk+B_pk))
-    B->>Tracker: announce(perm_room)<br/>sha256(sort(A_pk+B_pk))
+    A->>Tracker: announce in perm_room
+    B->>Tracker: announce in perm_room
 
-    Note over A,B: Bonding complete:<br/>A and B can exchange<br/>encrypted messages
+    Note over A,B: Bonded ✓<br/>Can now send encrypted messages
 ```
 
-**After the first handshake**, both peers derive the same permanent room and announce there on every app launch, so they can reconnect without scanning the QR again.
+**Key point:** ICE candidates are bundled in the SDP (vanilla ICE), not trickled separately—required because the tracker only understands announce/answer messages.
+
+**After bonding:** Both peers derive and announce in the permanent room. Reconnects happen without QR scanning.
 
 #### Reconnection Flow (both peers have each other saved)
 
-<!-- DIAGRAM: reconnection -->
 ```mermaid
 sequenceDiagram
-    participant A as A Device<br/>(WebRTC)
-    participant STUN_A as STUN/TURN ICE<br/>(stun.l.google.com)
-    participant Tracker as WebTorrent Tracker<br/>(wss://tracker.ow.com)
-    participant STUN_B as STUN/TURN ICE<br/>(stun.l.google.com)
-    participant B as B Device<br/>(WebRTC)
+    participant A as A
+    participant Tracker as WebTorrent Tracker
+    participant B as B
 
-    Note over A,B: Both announce in perm_room<br/>sha256(sort(A_pk+B_pk))
-    A->>Tracker: announce(perm_room)
-    B->>Tracker: announce(perm_room)
-    Tracker->>A: route peer list
-    Tracker->>B: route peer list
+    Note over A,B: On app launch:<br/>both announce in permanent room
 
-    Note over A: First to connect<br/>sends offer
-    A->>STUN_A: gather ICE
-    A->>Tracker: announce(offer SDP+ICE)
-    Tracker->>B: route offer
+    A->>Tracker: announce in perm_room
+    B->>Tracker: announce in perm_room
+    Tracker->>A: peer list (includes B)
+    Tracker->>B: peer list (includes A)
 
-    B->>STUN_B: gather ICE
-    B->>Tracker: sendAnswer(SDP+ICE)
-    Tracker->>A: route answer
+    rect rgb(200,220,255)
+    Note over A: First to initiate<br/>sends offer
+    A->>Tracker: announce + offer<br/>SDP + ICE candidates<br/>in perm_room
+    Tracker->>B: deliver offer
+    end
 
-    A->>B: ICE connectivity checks
-    B->>A: ICE connectivity checks
+    rect rgb(200,220,255)
+    B->>Tracker: sendAnswer<br/>SDP + ICE candidates
+    Tracker->>A: deliver answer
+    end
 
-    Note over A,B: WebRTC DataChannel established<br/>(direct P2P)
-
-    Note over A,B: Connection restored:<br/>messages can be exchanged
+    rect rgb(200,255,200)
+    Note over A,B: ICE connectivity → DataChannel
+    Note over A,B: Ready for encrypted messages
+    end
 ```
 
-#### Signaling Message Flow (summary)
+#### Participant Roles
 
-<!-- DIAGRAM: signaling_summary -->
+**A (Offerer / Initiator):**
+- Has B's public key (scanned QR or saved contact)
+- Initiates handshake by creating WebRTC offer
+- Gathers ICE candidates locally
+- Sends offer + all candidates to tracker in one message
+
+**Tracker (Rendezvous Point):**
+- Routes WebRTC signaling only—never sees plaintext
+- Peers announce to enter a "room"
+- Delivers offer/answer between A and B via announce protocol
+- **No storage, no relay:** stateless routing
+
+**B (Answerer / Listener):**
+- Listens in personal room: `sha256(B_pub)`
+- Receives A's offer from tracker
+- Gathers own ICE candidates
+- Sends answer + candidates back via tracker
+- Both devices form direct DataChannel
+
+#### Signaling Message Flow
+
 ```mermaid
 sequenceDiagram
-    participant A as A (offerer)
-    participant Tracker as Tracker
-    participant B as B (answerer)
+    participant A as A (Offerer)
+    participant T as Tracker<br/>(routing only)
+    participant B as B (Answerer)
 
-    A->>Tracker: announceWithOffer
-    Tracker->>B: offer
-    B->>Tracker: sendAnswer
-    Tracker->>A: answer
+    Note over A,B: Room = sha256(B_pub)
 
-    Note over Tracker: No relay —<br/>tracker only routes SDP
+    A->>T: announceWithOffer<br/>SDP + ICE candidates<br/>+ identity attrs
+    T->>B: [deliver offer]
+
+    B->>T: sendAnswer<br/>SDP + ICE candidates
+    T->>A: [deliver answer]
+
+    Note over A,B: P2P connection<br/>established
 ```
 
-Identity (public key, display name) is embedded in the SDP offer as custom `a=x-trusti-*` attributes, so B learns who is calling without needing a directory server.
+**Identity:** Public key + display name in SDP as `a=x-trusti-*` attributes—B knows who called without needing a server.
 
 ### 3. WebRTC Data Channel (Vanilla ICE)
 
-Once signaling completes, a WebRTC `RTCPeerConnection` with a `DataChannel` is established directly between the two devices (`smp/WebRtcTransport.kt`).
+Once signaling completes, a direct P2P encrypted channel opens between devices (`smp/WebRtcTransport.kt`).
 
-TruSTI uses **vanilla ICE** (also called "complete ICE"): ICE gathering runs to completion before the SDP is sent, so all candidates are bundled in the SDP itself. This is necessary because the WebTorrent tracker doesn't relay arbitrary peer messages — only the structured announce format. Trickle ICE would require a separate signaling channel.
+**Vanilla ICE (Complete Mode):**
+- All ICE candidates gathered **before** sending SDP
+- Bundled into offer/answer at once
+- **Why:** WebTorrent tracker only understands announce/answer protocol, not trickle ICE messages
 
-NAT traversal uses:
-- Google STUN (`stun.l.google.com:19302`)
-- OpenRelay TURN (fallback when both peers are behind symmetric NAT)
+```mermaid
+graph LR
+    A["A gathers<br/>ICE candidates"]
+    SDP1["SDP Offer<br/>+ all candidates"]
+    T["Tracker<br/>routes"]
+    SDP2["SDP Answer<br/>+ all candidates"]
+    B["B gathers<br/>ICE candidates"]
+    P2P["P2P<br/>DataChannel"]
 
-If the peer is offline when a message is sent, the handshake is initiated automatically and the message is delivered as soon as the data channel opens.
+    A --> SDP1 --> T --> B
+    B --> SDP2 --> T --> A
+    A --> P2P
+    B --> P2P
+
+    style P2P fill:#90EE90
+    style T fill:#87CEEB
+```
+
+**NAT Traversal:**
+- Google STUN servers: public IP + port discovery
+- OpenRelay TURN: fallback for symmetric NAT (bandwidth relay)
+
+**Auto-initiate:** If offline when message sent, handshake triggers automatically; message queued and delivered on open.
 
 ### 4. End-to-End Encryption
 
-Every message is encrypted before being handed to WebRTC. Even if the data channel were intercepted, the content would be unreadable without the recipient's private key.
+Every message is encrypted **before** handing to WebRTC. Even if captured, content is unreadable without the recipient's private key.
 
-**Algorithm: ECDH ephemeral + AES-256-GCM** (`smp/Encryption.kt`)
+**Algorithm: ECDH (ephemeral) + AES-256-GCM** (`smp/Encryption.kt`)
 
+**Sender (A) encrypts for recipient (B):**
 ```
-Encrypt(plaintext, recipientPublicKey):
-  1. Generate a fresh ephemeral EC P-256 key pair
-  2. ECDH(ephemeral_private, recipient_public) → shared_secret
-  3. SHA-256(shared_secret) → 256-bit AES key
-  4. Generate 12-byte random IV
-  5. AES-256-GCM encrypt(plaintext, key, IV) → ciphertext + 128-bit tag
-
-Wire format:
-  [2-byte big-endian ephPubLen][ephPubDER][12-byte IV][ciphertext+GCM-tag]
+plaintext → [gen ephemeral key pair]
+         → [ECDH: ephemeral_priv XOR B_pub]
+         → [derive AES-256 key via SHA-256]
+         → [gen random 12-byte IV]
+         → [AES-256-GCM encrypt + auth tag]
+         → wire format: [ephPubLen|ephPubDER|IV|ciphertext|tag]
 ```
 
+**Recipient (B) decrypts:**
 ```
-Decrypt(data, myPrivateKey):
-  1. Parse ephPubLen, ephPubDER, IV, ciphertext
-  2. ECDH(my_private, ephemeral_public) → shared_secret
-  3. SHA-256(shared_secret) → AES key
-  4. AES-256-GCM decrypt(ciphertext, key, IV) → plaintext
-     (authentication tag verified; fails loudly on tamper)
+wire format → [parse ephemeral_pub, IV, ciphertext]
+           → [ECDH: B_priv XOR ephemeral_pub]
+           → [derive same AES-256 key via SHA-256]
+           → [AES-256-GCM decrypt + verify auth tag]
+           → plaintext (or ❌ fail if tampered)
 ```
 
-Each message uses a freshly generated ephemeral key pair, so there is no long-term shared secret and no key reuse across messages.
+**Ephemeral key per message:** No long-term shared secret; no key reuse. Past messages stay safe even if long-term key is compromised (forward secrecy).
 
 ### 5. Message Types
 
-All messages are JSON, encrypted as described above. Three types are defined:
+All messages are JSON (then encrypted). Three types:
 
-| `type`            | Payload                            | Purpose                                        |
-| --------          | ---------                          | ---------                                      |
-| `text`            | `from`, `content`, `ts`            | Chat message                                   |
-| `status_request`  | `from`                             | Ask the peer for their current test status     |
-| `status_response` | `from`, `hasPositive`, `queuedAt?` | Reply with whether any test result is positive |
+| Type | Payload | Purpose |
+| --- | --- | --- |
+| `text` | `{from, content, ts}` | Chat message |
+| `status_request` | `{from}` | Ask peer: do you have a positive test? |
+| `status_response` | `{from, hasPositive, queuedAt?}` | Reply: yes/no + delivery timestamp |
 
-Status responses that can't be delivered immediately (contact offline) are persisted locally in `PendingStatusStore` and sent as soon as the contact next connects.
+**Status Delivery:** If B is offline when A sends a status update, A stores it in `PendingStatusStore`. When B reconnects, the status is delivered atomically (read-once, then sent). Only the latest status per contact is kept—no backlog.
 
 ---
 
@@ -208,13 +334,44 @@ All persistent state lives in Android `SharedPreferences` as JSON strings — no
 | `pendingAccepts`           | `Set<pk>`                                | B-side: approved contacts waiting for the DataChannel to open before sending `acc`                   |
 | `isConnected` on `Contact` | `Boolean`                                | Set to `true` in memory when a transport opens; always `false` when loaded from disk                 |
 
-### What happens at startup
+### Startup Sequence
 
-1. `KeyManager` loads (or generates) the key pair from SharedPreferences.
-2. `P2PMessenger.initialize()` connects to the tracker and, once the WebSocket is ready, announces in two kinds of rooms:
-   - **Personal room** (`sha256(myPk)`) — so new peers can reach this device via QR scan.
-   - **Permanent rooms** (`sha256(sort(A_pk + B_pk))` for each saved contact) — so existing bonds reconnect automatically.
-3. `isConnected` starts as `false` for all contacts; it flips to `true` in memory the moment a DataChannel opens, and back to `false` when it closes.
+```mermaid
+sequenceDiagram
+    participant App as App Launch
+    participant KeyMgr as KeyManager
+    participant SharedPref as SharedPreferences
+    participant Messenger as P2PMessenger
+    participant Tracker as WebTorrent Tracker
+
+    App->>KeyMgr: Initialize
+    KeyMgr->>SharedPref: Load/generate EC P-256 keypair
+    SharedPref-->>KeyMgr: my_pub, my_priv
+
+    App->>Messenger: initialize()
+    Messenger->>Tracker: Connect WebSocket<br/>wss://tracker.openwebtorrent.com
+
+    Messenger->>Messenger: Load saved contacts<br/>from SharedPreferences
+
+    Tracker-->>Messenger: Connected ✓
+
+    rect rgb(220,240,255)
+    Note over Messenger,Tracker: Announce in personal room
+    Messenger->>Tracker: announce<br/>room = sha256(my_pub)
+    end
+
+    rect rgb(220,240,255)
+    Note over Messenger,Tracker: Announce in permanent rooms
+    Messenger->>Tracker: announce in perm_room<br/>for each saved contact
+    end
+
+    Note over Messenger: Ready for incoming QR scans<br/>& contact reconnections
+```
+
+**State after startup:**
+- All contacts have `isConnected = false` (memory only)
+- Personal room active → can receive incoming scans
+- Permanent rooms active → can receive peer announcements for existing bonds
 
 ### Pending status delivery
 
@@ -224,13 +381,42 @@ When a test result changes and a contact is offline, the latest status is writte
 
 ## Privacy Properties
 
-| Property                      | How it's achieved                                                                                                             |
-| ----------                    | ------------------                                                                                                            |
-| No server stores messages     | Messages travel over an encrypted WebRTC data channel directly between devices                                                |
-| No server knows your identity | Your key pair is generated locally; the tracker only sees ephemeral peer IDs                                                  |
-| Forward secrecy per message   | Each encryption uses a fresh ephemeral key — past messages can't be decrypted even if your long-term key is later compromised |
-| Authenticated encryption      | AES-GCM provides integrity; a tampered message will fail decryption                                                           |
-| Contact discovery is private  | Room IDs are SHA-256 hashes; the tracker cannot reverse them to learn who is talking to whom                                  |
+**What the tracker sees:**
+- Hashed room IDs (sha256 values—cannot be reversed)
+- SDP offer/answer (connection handshake only—no content)
+- Peer announcements (time + room—no metadata)
+
+**What the tracker does NOT see:**
+- Message content (encrypted end-to-end)
+- Real identities (only public key hashes)
+- Contact relationships (different per pair)
+- Test results, health data, anything about users
+
+```mermaid
+sequenceDiagram
+    participant A as A (Device)
+    participant T as Tracker
+    participant B as B (Device)
+
+    A->>A: Plaintext message
+    A->>A: Encrypt with B_pub
+    A->>T: Send (hashed room + encrypted bytes)
+
+    Note over T: Tracker sees:<br/>✗ Message content<br/>✗ Real identities<br/>✓ Only encrypted blobs<br/>& room hashes
+
+    T->>B: Deliver encrypted bytes
+
+    B->>B: Decrypt with B_priv
+    B->>B: Read plaintext
+```
+
+| Property | How achieved |
+| --- | --- |
+| **No server stores messages** | End-to-end encrypted; only encrypted bytes route through tracker |
+| **No server knows identity** | Keys generated locally; tracker sees only room hashes |
+| **Forward secrecy** | Ephemeral key per message—past intercepts unreadable even if long-term key stolen |
+| **Authenticated encryption** | AES-GCM tag; tampering detected immediately (fail-safe) |
+| **Contact privacy** | Different room per pair; tracker can't link contacts together |
 
 ---
 
