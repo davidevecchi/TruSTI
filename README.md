@@ -10,22 +10,22 @@ graph TB
     QR -->|Scan| A_Key
 
     subgraph DevA["Device A"]
-        A_Key["🔑 EC P-256 Key<br/>A_pub, A_priv"]
-        A_Store["💾 SharedPrefs<br/>Contacts, Tests"]
-        A_Messenger["📨 P2PMessenger"]
+        A_Key["🔑 EC P-256 Key<br/>A_pub, A_priv<br/><br/>💾 STORAGE<br/>KeyManager→SharedPrefs"]
+        A_Store["💾 SharedPrefs<br/>Contacts, Tests, Profile<br/><br/>📝 PERSISTENT<br/>ContactStore<br/>TestsStore<br/>ProfileManager"]
+        A_Messenger["📨 P2PMessenger<br/><br/>⚡ SESSION CACHE<br/>transports, pendingOffers<br/>pendingApproval, retryJobs"]
         A_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
-        A_WebRTC["📡 WebRTC DataChannel"]
+        A_WebRTC["📡 WebRTC DataChannel<br/><br/>⚡ SESSION CACHE<br/>isConnected flag"]
     end
 
-    Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com"]
+    Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com<br/><br/>⚠️ NO STORAGE<br/>Stateless routing only"]
     STUN["🧭 STUN/TURN<br/>stun.l.google.com"]
 
     subgraph DevB["Device B"]
-        B_Key["🔑 EC P-256 Key<br/>B_pub, B_priv"]
-        B_Store["💾 SharedPrefs<br/>Contacts, Tests"]
-        B_Messenger["📨 P2PMessenger"]
+        B_Key["🔑 EC P-256 Key<br/>B_pub, B_priv<br/><br/>💾 STORAGE<br/>KeyManager→SharedPrefs"]
+        B_Store["💾 SharedPrefs<br/>Contacts, Tests, Profile<br/><br/>📝 PERSISTENT<br/>ContactStore<br/>TestsStore<br/>ProfileManager"]
+        B_Messenger["📨 P2PMessenger<br/><br/>⚡ SESSION CACHE<br/>transports, pendingOffers<br/>pendingApproval, retryJobs"]
         B_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
-        B_WebRTC["📡 WebRTC DataChannel"]
+        B_WebRTC["📡 WebRTC DataChannel<br/><br/>⚡ SESSION CACHE<br/>isConnected flag"]
     end
 
     A_Key --> A_Messenger
@@ -110,6 +110,10 @@ sequenceDiagram
     Note over A: Derive shared room<br/>Store B as contact
     end
 
+    rect rgba(0, 255, 0, 0.4)
+    Note over A: 💾 PERSISTENT<br/>ContactStore.trusti_contacts<br/>(B saved with pub key)
+    end
+
     Note over B: Listening for peer...
     Note over A: Later: scan triggers handshake
 ```
@@ -150,8 +154,16 @@ sequenceDiagram
     B->>ICE_B: gather candidates
     end
 
+    rect rgba(255, 170, 0, 0.4)
+    Note over A: ⚡ SESSION CACHE<br/>offerId stored in pendingOffers
+    end
+
     A->>Tracker: announce + offer<br/>SDP with all ICE candidates<br/>to sha256(B_pub)
     Tracker->>B: deliver offer
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over B: ⚡ SESSION CACHE<br/>Offer cached in handledOffers<br/>(dedup check)
+    end
 
     B->>Tracker: sendAnswer<br/>SDP with all ICE candidates
     Tracker->>A: deliver answer
@@ -161,6 +173,10 @@ sequenceDiagram
     A->>B: ICE checks (direct P2P)
     B->>A: ICE checks (direct P2P)
     Note over A,B: DataChannel open
+    end
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over A,B: ⚡ SESSION CACHE<br/>transports map + isConnected=true
     end
 
     A->>Tracker: announce in perm_room
@@ -181,7 +197,15 @@ sequenceDiagram
     participant Tracker as WebTorrent Tracker
     participant B as B
 
-    Note over A,B: On app launch:<br/>both announce in permanent room
+    rect rgba(0, 255, 0, 0.4)
+    Note over A,B: On app launch:<br/>💾 Load from SharedPrefs<br/>ContactStore.trusti_contacts
+    end
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over A,B: ⚡ Create in-memory maps<br/>transports, pendingOffers<br/>pendingApproval, etc.
+    end
+
+    Note over A,B: Both announce in permanent room
 
     A->>Tracker: announce in perm_room
     B->>Tracker: announce in perm_room
@@ -189,18 +213,19 @@ sequenceDiagram
     Tracker->>B: peer list (includes A)
 
     rect rgba(255, 170, 0, 0.4)
-    Note over A: First to initiate<br/>sends offer
+    Note over A: First to initiate<br/>⚡ Store offerId in<br/>pendingOffers (SESSION)
     A->>Tracker: announce + offer<br/>SDP + ICE candidates<br/>in perm_room
     Tracker->>B: deliver offer
     end
 
     rect rgba(255, 170, 0, 0.4)
+    Note over B: ⚡ Cache offer in<br/>handledOffers (SESSION)
     B->>Tracker: sendAnswer<br/>SDP + ICE candidates
     Tracker->>A: deliver answer
     end
 
     rect rgba(0, 255, 0, 0.4)
-    Note over A,B: ICE connectivity → DataChannel
+    Note over A,B: ICE connectivity → DataChannel<br/>⚡ Create WebRtcTransport<br/>Add to transports map
     Note over A,B: Ready for encrypted messages
     end
 ```
@@ -231,21 +256,29 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant A as A (Offerer)
-    participant T as Tracker<br/>(routing only)
+    participant T as Tracker<br/>(routing only)<br/>⚠️ NO STORAGE
     participant B as B (Answerer)
 
     rect rgba(255, 170, 0, 0.4)
     Note over A,B: Room = sha256(B_pub)
 
+    rect rgba(255, 170, 0, 0.4)
+    Note over A: ⚡ SESSION CACHE<br/>pendingOffers[offerId] = B_pk
+    end
+
     A->>T: announceWithOffer<br/>SDP + ICE candidates<br/>+ identity attrs
     T->>B: [deliver offer]
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over B: ⚡ SESSION CACHE<br/>handledOffers[B_pk] = offerId
+    end
 
     B->>T: sendAnswer<br/>SDP + ICE candidates
     T->>A: [deliver answer]
     end
 
     rect rgba(0, 255, 0, 0.4)
-    Note over A,B: P2P connection<br/>established
+    Note over A,B: P2P connection<br/>established<br/>⚡ transports[peer_pk] = WebRtcTransport
     end
 ```
 
@@ -367,16 +400,32 @@ sequenceDiagram
     participant KeyMgr as KeyManager
     participant SharedPref as SharedPreferences
     participant Messenger as P2PMessenger
+    participant Memory as Memory Cache
     participant Tracker as WebTorrent Tracker
 
     App->>KeyMgr: Initialize
     KeyMgr->>SharedPref: Load/generate EC P-256 keypair
     SharedPref-->>KeyMgr: my_pub, my_priv
 
-    App->>Messenger: initialize()
-    Messenger->>Tracker: Connect WebSocket<br/>wss://tracker.openwebtorrent.com
+    rect rgba(0, 255, 0, 0.4)
+    Note over KeyMgr: 💾 PERSISTENT<br/>KeyManager.trusti_keys
+    end
 
-    Messenger->>Messenger: Load saved contacts<br/>from SharedPreferences
+    App->>Messenger: initialize()
+    Messenger->>SharedPref: Load contacts + tests<br/>+ pending status
+    SharedPref-->>Messenger: Contacts[], Tests[], Status
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over SharedPref: 💾 PERSISTENT<br/>ContactStore.trusti_contacts<br/>TestsStore.trusti_tests<br/>PendingStatusStore.trusti_pending_status
+    end
+
+    Messenger->>Memory: Initialize session caches:<br/>transports (empty)<br/>pendingOffers (empty)<br/>pendingApproval (empty)
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over Memory: ⚡ SESSION CACHE<br/>All transport maps + state<br/>Cleared on process death
+    end
+
+    Messenger->>Tracker: Connect WebSocket<br/>wss://tracker.openwebtorrent.com
 
     Tracker-->>Messenger: Connected ✓
 
@@ -388,6 +437,10 @@ sequenceDiagram
     rect rgba(0, 255, 255, 0.4)
     Note over Messenger,Tracker: Announce in permanent rooms
     Messenger->>Tracker: announce in perm_room<br/>for each saved contact
+    end
+
+    rect rgba(255, 170, 0, 0.4)
+    Note over Messenger,Memory: Set isConnected=false (memory)<br/>Contacts loaded with cached status
     end
 
     Note over Messenger: Ready for incoming QR scans<br/>& contact reconnections
@@ -420,21 +473,33 @@ When a test result changes and a contact is offline, the latest status is writte
 ```mermaid
 sequenceDiagram
     participant A as A (Device)
-    participant T as Tracker
+    participant T as Tracker<br/>⚠️ NO STORAGE
     participant B as B (Device)
 
-    A->>A: Plaintext message
-    A->>A: Encrypt with B_pub
+    rect rgba(0, 255, 0, 0.4)
+    Note over A: Plaintext in memory<br/>⚡ (SESSION only)
+    end
+
+    A->>A: Encrypt with B_pub<br/>ECDH ephemeral key
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over A: 💾 Ephemeral key<br/>used once then discarded
+    end
+
     A->>T: Send (hashed room + encrypted bytes)
 
     rect rgba(255, 0, 0, 0.4)
-    Note over T: Tracker sees:<br/>✗ Message content<br/>✗ Real identities<br/>✓ Only encrypted blobs<br/>& room hashes
+    Note over T: Tracker sees:<br/>✗ Message content<br/>✗ Real identities<br/>✗ Private keys<br/>✓ Only encrypted blobs<br/>& room hashes<br/><br/>⚠️ NO PERSISTENCE
     end
 
     T->>B: Deliver encrypted bytes
 
+    rect rgba(0, 255, 0, 0.4)
+    Note over B: 💾 Ciphertext stored<br/>in message cache<br/>(optional: MessageStore)
+    end
+
     B->>B: Decrypt with B_priv
-    B->>B: Read plaintext
+    B->>B: Read plaintext<br/>⚡ (SESSION only)
 ```
 
 | Property | How achieved |
