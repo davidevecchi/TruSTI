@@ -2,7 +2,7 @@
 
 A privacy-first Android app for sharing STI test results with trusted contacts. Two people exchange a QR code once; after that they can share encrypted health status updates peer-to-peer, with no server ever seeing message content.
 
-**Architecture Overview:**
+**Architecture Overview (Final with Mitigations):**
 
 ```mermaid
 graph TB
@@ -10,29 +10,29 @@ graph TB
     QR -->|Scan| A_Key
 
     subgraph DevA["Device A"]
-        A_Key["🔑 EC P-256 Key<br/>A_pub, A_priv<br/><br/>💾 STORAGE<br/>KeyManager→SharedPrefs"]
-        A_Store["💾 SharedPrefs<br/>Contacts, Tests, Profile<br/><br/>📝 PERSISTENT<br/>ContactStore<br/>TestsStore<br/>ProfileManager"]
+        A_KeyStore["🔐 Android KeyStore<br/>EC P-256 Key<br/>A_pub, A_priv<br/><br/>🛡️ HARDWARE-BACKED<br/>Private key never leaves<br/>Signing happens in OS"]
+        A_SharedPrefs["💾 SharedPrefs<br/>A_pub (only)<br/>Contacts, Tests, Profile"]
         A_Messenger["📨 P2PMessenger<br/><br/>⚡ SESSION CACHE<br/>transports, pendingOffers<br/>pendingApproval, retryJobs"]
         A_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
-        A_WebRTC["📡 WebRTC DataChannel<br/><br/>⚡ SESSION CACHE<br/>isConnected flag"]
+        A_WebRTC["📡 WebRTC DataChannel<br/>+ SDP Signature<br/>⚡ SESSION CACHE<br/>isConnected flag"]
     end
 
-    Tracker["🌐 WebTorrent Tracker<br/>wss://tracker.ow.com<br/><br/>⚠️ NO STORAGE<br/>Stateless routing only"]
+    Trackers["🌐 WebTorrent Trackers<br/>Primary + Fallback<br/>wss://tracker.openwebtorrent.com<br/>+ alternative/self-hosted<br/><br/>⚠️ NO STORAGE<br/>Stateless routing only"]
     STUN["🧭 STUN/TURN<br/>stun.l.google.com"]
 
     subgraph DevB["Device B"]
-        B_Key["🔑 EC P-256 Key<br/>B_pub, B_priv<br/><br/>💾 STORAGE<br/>KeyManager→SharedPrefs"]
-        B_Store["💾 SharedPrefs<br/>Contacts, Tests, Profile<br/><br/>📝 PERSISTENT<br/>ContactStore<br/>TestsStore<br/>ProfileManager"]
+        B_KeyStore["🔐 Android KeyStore<br/>EC P-256 Key<br/>B_pub, B_priv<br/><br/>🛡️ HARDWARE-BACKED<br/>Private key never leaves<br/>Signing happens in OS"]
+        B_SharedPrefs["💾 SharedPrefs<br/>B_pub (only)<br/>Contacts, Tests, Profile"]
         B_Messenger["📨 P2PMessenger<br/><br/>⚡ SESSION CACHE<br/>transports, pendingOffers<br/>pendingApproval, retryJobs"]
         B_Encrypt["🔐 Encryption<br/>ECDH+AES-256-GCM"]
-        B_WebRTC["📡 WebRTC DataChannel<br/><br/>⚡ SESSION CACHE<br/>isConnected flag"]
+        B_WebRTC["📡 WebRTC DataChannel<br/>+ SDP Signature<br/>+ Safety Number<br/>⚡ SESSION CACHE<br/>isConnected flag"]
     end
 
-    A_Key --> A_Messenger
-    B_Key --> B_Messenger
+    A_KeyStore --> A_Messenger
+    B_KeyStore --> B_Messenger
 
-    A_Store -.->|Load/Save| A_Messenger
-    B_Store -.->|Load/Save| B_Messenger
+    A_SharedPrefs -.->|Load/Save| A_Messenger
+    B_SharedPrefs -.->|Load/Save| B_Messenger
 
     A_Messenger -->|Plaintext| A_Encrypt
     B_Messenger -->|Plaintext| B_Encrypt
@@ -40,10 +40,10 @@ graph TB
     A_Encrypt -->|Ciphertext| A_WebRTC
     B_Encrypt -->|Ciphertext| B_WebRTC
 
-    A_WebRTC -->|SDP Offer/Answer| Tracker
-    B_WebRTC -->|SDP Offer/Answer| Tracker
-    Tracker -->|Route| A_WebRTC
-    Tracker -->|Route| B_WebRTC
+    A_WebRTC -->|SDP Offer<br/>+ Signature| Trackers
+    B_WebRTC -->|SDP Answer<br/>+ Signature| Trackers
+    Trackers -->|Route| A_WebRTC
+    Trackers -->|Route| B_WebRTC
 
     A_WebRTC -.->|ICE Candidates| STUN
     B_WebRTC -.->|ICE Candidates| STUN
@@ -52,19 +52,18 @@ graph TB
 
     style DevA fill:#ffffff00,stroke:#0080ff,color:#000,stroke-width:2px
     style DevB fill:#ffffff00,stroke:#0080ff,color:#000,stroke-width:2px
-    style Infra fill:#ffffff00,stroke:#ff0000,color:#000,stroke-width:2px
 
-    style A_Key fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:2px
+    style A_KeyStore fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:3px
     style A_Messenger fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
     style A_Encrypt fill:#ff00ff66,stroke:#ff00ff,color:#000,stroke-width:2px
     style A_WebRTC fill:#ffaa0066,stroke:#ffaa00,color:#000,stroke-width:2px
 
-    style B_Key fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:2px
+    style B_KeyStore fill:#00ff0066,stroke:#00ff00,color:#000,stroke-width:3px
     style B_Messenger fill:#0080ff66,stroke:#0080ff,color:#000,stroke-width:2px
     style B_Encrypt fill:#ff00ff66,stroke:#ff00ff,color:#000,stroke-width:2px
     style B_WebRTC fill:#ffaa0066,stroke:#ffaa00,color:#000,stroke-width:2px
 
-    style Tracker fill:#ff000066,stroke:#ff0000,color:#000,stroke-width:2px
+    style Trackers fill:#ff000066,stroke:#ff0000,color:#000,stroke-width:2px
     style STUN fill:#ffff0066,stroke:#ffff00,color:#000,stroke-width:2px
     style QR fill:#00ffff66,stroke:#00ffff,color:#000,stroke-width:2px
 ```
@@ -684,6 +683,44 @@ Implement TOFU (Trust On First Use) with display verification:
 - Implementation: Add UI dialog during `IncomingRequest` to display safety number
 - Timeline: Post-MVP (good-to-have for security, not blocking initial release)
 
+**Safety Number Verification Flow:**
+```mermaid
+sequenceDiagram
+    participant A as A<br/>(User scans QR)
+    participant A_Device as A Device
+    participant B_Device as B Device
+    participant B as B<br/>(Receives offer)
+
+    rect rgba(0, 128, 255, 0.4)
+    Note over A,A_Device: A scans B's QR
+    A_Device->>A_Device: Compute safety_num<br/>= first_6_chars(<br/>sha256(sorted(A_pub||B_pub)))
+    A_Device->>A: Display dialog:<br/>"Verify with Alice:"<br/>Safety #: 3F7A9C
+    end
+
+    A_Device->>B_Device: Send offer<br/>via tracker
+
+    rect rgba(255, 170, 0, 0.4)
+    B_Device->>B_Device: Receive offer
+    B_Device->>B_Device: Compute safety_num<br/>= same formula
+    B_Device->>B: Show dialog:<br/>"Bob is calling"<br/>Safety #: 3F7A9C<br/>[Accept] [Decline]
+    end
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over A,B: Out-of-band verification
+    A->>B: (In person / call)<br/>"Do you see 3F7A9C?"
+    B-->>A: "Yes, I see it!"
+    end
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over B: User taps Accept
+    B->>B_Device: [Accept]
+    B_Device->>B_Device: Send "acc" message
+    B_Device->>A_Device: DataChannel opens
+    end
+
+    Note over A,B: ✓ Bond verified<br/>TOFU established
+```
+
 ---
 
 ### 4. No Key Rotation or Bond Revocation Mechanism ⚠️ **MEDIUM SEVERITY**
@@ -703,6 +740,42 @@ Implement key rotation and optional bond revocation:
 - **Bond revocation:** Contacts can send "revoke_bond" to all bonded peers to explicitly deny access from a specific public key
 - Implementation: Add new message types in P2PMessenger, update ContactStore to version the public key
 - Timeline: Recommended before any public release
+
+**Key Rotation Flow:**
+```mermaid
+sequenceDiagram
+    participant User as User<br/>(Device compromised)
+    participant Device as Device A<br/>(Old key: K_old)
+    participant Contacts as All Bonded<br/>Contacts
+    participant KeyStore as KeyStore
+
+    User->>Device: Settings → Rotate Keys
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over Device,KeyStore: Generate new key pair
+    Device->>KeyStore: generateKeyPair()
+    KeyStore-->>Device: K_new_pub, K_new_priv<br/>(in KeyStore)
+    Device->>Device: Store K_new_pub<br/>in SharedPrefs
+    end
+
+    rect rgba(0, 128, 255, 0.4)
+    Note over Device,Contacts: Notify all contacts
+    Device->>Contacts: Broadcast message:<br/>"key_rotation"<br/>{old_pk: K_old_pub,<br/>new_pk: K_new_pub,<br/>sig: K_old_priv(new_pk)}
+    end
+
+    rect rgba(0, 255, 0, 0.4)
+    Note over Contacts: Each contact verifies
+    Contacts->>Contacts: Verify sig with K_old_pub
+    alt Signature Valid
+        Contacts->>Contacts: Update ContactStore<br/>K_old_pub → K_new_pub
+        Contacts->>Contacts: Future messages<br/>use K_new_pub
+    else Invalid
+        Contacts->>Contacts: ❌ Reject rotation<br/>Continue using K_old_pub
+    end
+    end
+
+    Note over Device,Contacts: ✓ Bond preserved<br/>Identity rotated
+```
 
 ---
 
@@ -727,6 +800,64 @@ Implement tracker resilience:
 - **Local network fallback:** If on the same local network, use mDNS or BLE discovery without tracker
 - Implementation: Parameterize tracker URL, add tracker failover logic, optional IP backup discovery
 - Timeline: Post-MVP (good for robustness, not blocking initial release)
+
+**Multi-Tracker Failover Architecture:**
+```mermaid
+graph TD
+    App["App Start<br/>Initialize Trackers"]
+
+    App --> T1["🌐 Tracker 1<br/>wss://tracker.openwebtorrent.com<br/>(Primary)<br/>Status: ?"]
+
+    T1 -->|Connected| Primary["✓ Use Primary"]
+    T1 -->|Timeout/Down| T2["🌐 Tracker 2<br/>wss://self-hosted.example.com<br/>(Fallback)<br/>Status: ?"]
+
+    T2 -->|Connected| Secondary["✓ Use Fallback"]
+    T2 -->|Timeout/Down| T3["🌐 Tracker 3<br/>wss://alternative-tracker.org<br/>(Last Resort)<br/>Status: ?"]
+
+    T3 -->|Connected| Tertiary["✓ Use Last Resort"]
+    T3 -->|All Trackers Down| LocalFallback["📡 Local Fallback<br/>mDNS/BLE Discovery<br/>Direct IP (if known)"]
+
+    Primary --> Operation["Operating<br/>Announce/Listen"]
+    Secondary --> Operation
+    Tertiary --> Operation
+    LocalFallback --> Operation
+
+    Operation -->|Primary recovers| ReconnectPrimary["Reconnect to Primary"]
+    ReconnectPrimary --> Primary
+
+    style App fill:#0080ff66,stroke:#0080ff,stroke-width:2px
+    style T1 fill:#00ff0066,stroke:#00ff00,stroke-width:2px
+    style T2 fill:#ffaa0066,stroke:#ffaa00,stroke-width:2px
+    style T3 fill:#ff000066,stroke:#ff0000,stroke-width:2px
+    style LocalFallback fill:#ff00ff66,stroke:#ff00ff,stroke-width:2px
+    style Operation fill:#00ffff66,stroke:#00ffff,stroke-width:2px
+```
+
+**Failover Decision Tree:**
+```mermaid
+sequenceDiagram
+    participant TorrentSig as TorrentSignaling
+    participant T1 as Primary<br/>Tracker
+    participant T2 as Fallback<br/>Tracker
+    participant LocalMDNS as Local<br/>mDNS/BLE
+
+    TorrentSig->>T1: Connect
+
+    alt T1 responds within timeout
+        T1-->>TorrentSig: ✓ Connected
+        TorrentSig->>TorrentSig: Use Primary
+    else T1 timeout/error
+        TorrentSig->>T2: Fallback: Connect
+        alt T2 responds
+            T2-->>TorrentSig: ✓ Connected
+            TorrentSig->>TorrentSig: Use Fallback
+        else T2 timeout/error
+            TorrentSig->>LocalMDNS: Final fallback<br/>mDNS + last-known IPs
+            LocalMDNS-->>TorrentSig: ✓ Local discovery
+            TorrentSig->>TorrentSig: Direct P2P<br/>on local network
+        end
+    end
+```
 
 ---
 
